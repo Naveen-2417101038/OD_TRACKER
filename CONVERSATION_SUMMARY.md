@@ -16,66 +16,71 @@ This document captures the setup details, configurations, and Git workflow estab
 
 ---
 
-## 🛠️ Actions Executed
+## 👥 1. How to Add Teammates to GitHub Repository
 
-### 1. Git Initialization & Remote Configuration
-- Initialized local Git repository.
-- Created `main` branch.
-- Added remote `origin`: `https://github.com/Sharjin-Jino/OD_TRACKER.git`.
+As the repository owner (`Sharjin-Jino`):
 
-### 2. Remote Synchronization
-- Safely fetched remote history (`origin/main`) which contained the initial `README.md`.
-- Synchronized local commit with remote commit using `git pull origin main --rebase --allow-unrelated-histories` (no destructive force push or hard resets were used).
-
-### 3. File Protection & `.gitignore`
-Updated `.gitignore` to exclude:
-- **Secrets:** `.env`, `.env.*` (preserving `.env.example`)
-- **Python:** `.venv/`, `venv/`, `env/`, `pycache/`, `__pycache__/`, `*.pyc`
-- **Frontend:** `node_modules/`, `dist/`, `dist-ssr/`
-- **IDE/OS:** `.vscode/`, `.idea/`, `.DS_Store`, `Thumbs.db`
-- **Data & Uploads:** `*.db`, `*.sqlite3`, `od_tracking.db`, `backend/uploads/od_letters/*`, `backend/uploads/certificates/*` (preserving `.gitkeep` markers).
-
-### 4. Secret Protection & Environment Example
-- Verified source code contains no hardcoded passwords, tokens, or MongoDB Atlas URIs.
-- Updated [.env.example](file:///e:/Design%20Thinking/.env.example) with placeholder configurations for local and production deployment.
-
-### 5. Documentation & Initial Commit
-- Updated [README.md](file:///e:/Design%20Thinking/README.md) with comprehensive installation instructions, architecture breakdown, features, and workflow rules.
-- Set local git user identity (`SHARJIN JINO S A`).
-- Created initial commit: `"Initial commit - OD Tracking Application"`.
+1. Open your GitHub repository: [https://github.com/Sharjin-Jino/OD_TRACKER](https://github.com/Sharjin-Jino/OD_TRACKER)
+2. Click **Settings** (tab on top menu).
+3. Select **Collaborators** from the left navigation sidebar.
+4. Click **Add people**.
+5. Type your teammate's **GitHub Username** or **Email Address**.
+6. Click **Add [username] to this repository**.
+7. Your teammate will receive an invitation email or can accept it directly at `https://github.com/Sharjin-Jino/OD_TRACKER/invitations`.
 
 ---
 
-## 🚀 Quick Reference Commands for Future Work
+## 💻 2. Teammate First-Time Computer Setup
 
-### 1️⃣ How to Start the Application Locally
+Once invited, your teammate should run these commands on their computer:
 
-#### Backend (Python Flask)
 ```bash
-# Activate virtual environment (PowerShell)
-.venv\Scripts\Activate.ps1
+# 1. Clone the project from GitHub
+git clone https://github.com/Sharjin-Jino/OD_TRACKER.git
+cd OD_TRACKER
 
-# Start Flask server (runs on http://localhost:5000)
+# 2. Create local .env file from template
+cp .env.example .env
+
+# 3. Setup Python Backend
+python -m venv .venv
+.venv\Scripts\Activate.ps1   # PowerShell on Windows
+pip install -r backend/requirements.txt
 python backend/app.py
-```
 
-#### Frontend (React + Vite)
-```bash
-# Start Vite development server (runs on http://localhost:5173)
+# 4. Setup React Frontend
+npm install
 npm run dev
 ```
 
 ---
 
-### 2️⃣ Team Git & GitHub Workflow
+## 🔄 3. How Teammates Push Their Changes & New Files to GitHub
 
-#### Daily Startup (Pull before starting work)
-```bash
-git checkout main
-git pull origin main
-```
+### Method A: Feature Branch Workflow (Recommended)
+1. **Pull latest changes before starting:**
+   ```bash
+   git checkout main
+   git pull origin main
+   ```
+2. **Create a branch for your feature:**
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+3. **Add files and commit:**
+   ```bash
+   git add .
+   git commit -m "Add new files and update feature"
+   ```
+4. **Push branch to GitHub:**
+   ```bash
+   git push -u origin feature/your-feature-name
+   ```
+5. **Merge on GitHub:** Go to GitHub and click **Compare & pull request** -> **Merge pull request**.
 
-#### Pushing New Changes
+---
+
+### Method B: Direct Push to Main (Quick Updates)
 ```bash
 git pull origin main
 git add .
@@ -83,17 +88,9 @@ git commit -m "Describe your changes"
 git push origin main
 ```
 
-#### Working on Major Features (Feature Branches)
-```bash
-git checkout -b feature/feature-name
-git add .
-git commit -m "Add feature-name functionality"
-git push -u origin feature/feature-name
-```
-
 ---
 
-## ⚠️ Collaboration Rules
+## ⚠️ Collaboration Golden Rules
 
 1. 🛑 **Never Force Push:** Do not run `git push --force` or `git reset --hard` on shared branches.
 2. 🔒 **Never Commit Secrets:** Keep secret keys, database URIs, and passwords inside local `.env` only.

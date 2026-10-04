@@ -79,123 +79,114 @@ OD_TRACKER/
 
 ---
 
-## ⚙️ Setup and Installation
+## 👥 How to Add Teammates to GitHub
 
-### Prerequisites
-- **Node.js:** v18.0.0 or higher
-- **Python:** v3.10 or higher
-- **MongoDB:** Local MongoDB or MongoDB Atlas connection string
+As the repository owner (`Sharjin-Jino`), follow these steps to give team members push access:
 
----
-
-### 1️⃣ Environment Variables Setup
-
-1. Copy `.env.example` to `.env` in the root directory:
-   ```bash
-   cp .env.example .env
-   ```
-2. Configure the required environment variables inside `.env`:
-   ```env
-   # Database Connection
-   MONGO_URI=mongodb://127.0.0.1:27017/od_tracking
-   MONGO_DB_NAME=od_tracking
-
-   # Flask Secret Key
-   SECRET_KEY=your_secure_random_secret_key
-
-   # Server Settings
-   FLASK_ENV=development
-   PORT=5000
-   CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
-
-   # Frontend API Base URL (Leave empty in dev for Vite proxy)
-   VITE_API_BASE_URL=
-   ```
+1. Open your GitHub Repository: [https://github.com/Sharjin-Jino/OD_TRACKER](https://github.com/Sharjin-Jino/OD_TRACKER)
+2. Go to **Settings** (tab at the top).
+3. Select **Collaborators** under the *Access* section in the left sidebar.
+4. Click **Add people**.
+5. Enter your teammate's **GitHub Username** or **Email Address**.
+6. Click **Add [username] to this repository**.
+7. Teammates will receive an email invitation or can visit `https://github.com/Sharjin-Jino/OD_TRACKER/invitations` to accept the invite.
 
 ---
 
-### 2️⃣ Backend Setup (Python Flask)
+## 💻 How Teammates Set Up the Project on Their Computer
 
-1. Navigate to the `backend` directory (or use project root with virtualenv):
-   ```bash
-   # Create a virtual environment
-   python -m venv .venv
+Once invited, each teammate should perform the following setup:
 
-   # Activate virtual environment
-   # On Windows (PowerShell):
-   .venv\Scripts\Activate.ps1
-   # On Linux/macOS:
-   source .venv/bin/activate
+### Step 1: Clone the Repository
+```bash
+git clone https://github.com/Sharjin-Jino/OD_TRACKER.git
+cd OD_TRACKER
+```
 
-   # Install dependencies
-   pip install -r backend/requirements.txt
-   ```
+### Step 2: Create Local Environment Configuration
+```bash
+# Copy template to create local .env
+cp .env.example .env
+```
 
-2. Seed initial sample data (optional but recommended for development):
-   ```bash
-   python backend/seed_od_data.py
-   ```
+### Step 3: Install Dependencies & Run
 
-3. Start the backend server:
-   ```bash
-   python backend/app.py
-   ```
-   *The backend server will start on `http://localhost:5000`.*
+#### Backend Setup:
+```bash
+python -m venv .venv
+# Windows PowerShell:
+.venv\Scripts\Activate.ps1
+# Linux/macOS:
+source .venv/bin/activate
 
----
+pip install -r backend/requirements.txt
+python backend/app.py
+```
 
-### 3️⃣ Frontend Setup (React + Vite)
-
-1. Install frontend dependencies:
-   ```bash
-   npm install
-   ```
-
-2. Start the Vite development server:
-   ```bash
-   npm run dev
-   ```
-   *The frontend application will run on `http://localhost:5173`.*
+#### Frontend Setup:
+```bash
+npm install
+npm run dev
+```
 
 ---
 
-## 🤝 Team Git & GitHub Collaboration Workflow
+## 🔄 How Teammates Push Their Changes & New Files to GitHub
 
-To ensure smooth collaboration across all team members working on this project:
+When a teammate adds new files or updates existing code, follow these steps:
 
-### 🔄 Daily Workflow
-1. **Pull latest changes before starting work:**
+### Method A: Feature Branch Workflow (Recommended)
+
+1. **Pull latest changes from main:**
    ```bash
    git checkout main
    git pull origin main
    ```
 
-2. **Create a Feature Branch for major changes:**
+2. **Create a new branch for the task:**
    ```bash
    git checkout -b feature/your-feature-name
    ```
 
-3. **Stage and Commit changes in small, logical chunks:**
+3. **Add files and commit changes:**
    ```bash
+   # Stage all new and modified files
    git add .
-   git commit -m "Add feature description"
+
+   # Verify what is staged (ensure .env and node_modules are ignored)
+   git status
+
+   # Commit with descriptive message
+   git commit -m "Add feature-name and update student dashboard"
    ```
 
-4. **Push the Feature Branch to GitHub:**
+4. **Push the branch to GitHub:**
    ```bash
    git push -u origin feature/your-feature-name
    ```
 
-5. **Merge to Main:**
-   Create a Pull Request (PR) on GitHub to review and merge into `main`.
+5. **Merge on GitHub:**
+   - Go to GitHub: [https://github.com/Sharjin-Jino/OD_TRACKER](https://github.com/Sharjin-Jino/OD_TRACKER)
+   - Click **Compare & pull request**
+   - Click **Create pull request** and merge into `main`.
 
-6. **Quick Pushing directly to `main` (for minor updates):**
-   ```bash
-   git pull origin main
-   git add .
-   git commit -m "Describe your update"
-   git push origin main
-   ```
+---
+
+### Method B: Direct Push to Main (For Quick Updates)
+
+```bash
+# 1. Always pull first to avoid conflicts
+git pull origin main
+
+# 2. Stage new/updated files
+git add .
+
+# 3. Commit changes
+git commit -m "Update student profile page and fix backend route"
+
+# 4. Push directly to main branch
+git push origin main
+```
 
 ---
 
