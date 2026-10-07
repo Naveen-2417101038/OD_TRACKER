@@ -971,6 +971,41 @@ export const getClassStudents = (): ClassStudentInfo[] => {
 export const getODRequests = (): ODRequest[] => {
   initializeDatabase();
   const reqs: ODRequest[] = JSON.parse(localStorage.getItem(KEYS.REQUESTS) || '[]');
+  const now = new Date();
+  let updated = false;
+
+  for (const req of reqs) {
+    if (
+      (req.status === 'HOD Approved - Certificate Pending' || req.status === 'HOD Approved') &&
+      req.certificateStatus !== 'Verified' &&
+      req.certificateStatus !== 'Pending Verification'
+    ) {
+      // Calculate deadline if not already saved
+      let deadline: Date | null = req.certificateDeadline ? new Date(req.certificateDeadline) : null;
+      if (!deadline || isNaN(deadline.getTime())) {
+        const toDateStr = req.toDate || req.fromDate || req.eventDate;
+        const toTimeStr = req.toTime || '17:00';
+        const eventEnd = new Date(`${toDateStr}T${toTimeStr}:00`);
+        if (!isNaN(eventEnd.getTime())) {
+          deadline = new Date(eventEnd.getTime() + 24 * 60 * 60 * 1000);
+        }
+      }
+
+      if (deadline && !isNaN(deadline.getTime()) && now > deadline) {
+        req.status = 'Rejected';
+        req.approvalStage = 'Rejected';
+        req.certificateStatus = 'Deadline Expired';
+        req.rejectionReason = 'OD rejected because the required certificate was not uploaded within 24 hours after the event ended.';
+        req.remarks = req.rejectionReason;
+        updated = true;
+      }
+    }
+  }
+
+  if (updated) {
+    localStorage.setItem(KEYS.REQUESTS, JSON.stringify(reqs));
+  }
+
   return reqs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 };
 
@@ -1242,10 +1277,32 @@ export const approveODRequestByFaculty = (
     case 'HOD':
     default:
       req.stages.hod = stageUpdate;
-      req.approvalStage = 'Approved';
-      req.status = 'Approved';
-      updateAttendanceForApprovedOD(req.eventType);
-      addNotification(`🎉 Congratulations! Your OD request ${requestId} for ${req.eventName} has been fully APPROVED by HOD. Compensatory attendance granted.`, 'success', requestId);
+      // Requirement 4: HOD approval sets OD to Certificate Pending hold state
+      req.approvalStage = 'Certificate Pending';
+      req.status = 'HOD Approved - Certificate Pending';
+      req.certificateStatus = 'Pending Upload';
+      req.hodApprovedAt = `${formattedDate}, ${formattedTime}`;
+
+      // Calculate deadline: exactly 24 hours from event end time (Requirement 5)
+      const toDateStr = req.toDate || req.fromDate || req.eventDate;
+      const toTimeStr = req.toTime || '17:00';
+      const eventEnd = new Date(`${toDateStr}T${toTimeStr}:00`);
+      if (!isNaN(eventEnd.getTime())) {
+        req.eventEndDatetime = `${toDateStr} ${toTimeStr}:00`;
+        const dl = new Date(eventEnd.getTime() + 24 * 60 * 60 * 1000);
+        const dlY = dl.getFullYear();
+        const dlM = String(dl.getMonth() + 1).padStart(2, '0');
+        const dlD = String(dl.getDate()).padStart(2, '0');
+        const dlH = String(dl.getHours()).padStart(2, '0');
+        const dlMin = String(dl.getMinutes()).padStart(2, '0');
+        req.certificateDeadline = `${dlY}-${dlM}-${dlD} ${dlH}:${dlMin}:00`;
+      }
+
+      addNotification(
+        `Your OD request ${requestId} for ${req.eventName} was sanctioned by HOD. Mandatory participation certificate must be uploaded within 24 hours after the event ends.`,
+        'info',
+        requestId
+      );
       break;
   }
 
@@ -1422,6 +1479,18 @@ export const verifyCertificateByFaculty = (
       req.verifiedByFacultyId = faculty.faculty_id;
       req.verifiedByFacultyName = faculty.name;
       req.verifiedAt = `${formattedDate}, ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+      
+      if (status === 'Verified') {
+        // Requirement 8: When verified, mark as Approved / Completed and grant compensatory attendance
+        req.status = 'Approved';
+        req.approvalStage = 'Approved';
+        updateAttendanceForApprovedOD(req.eventType);
+      } else {
+        req.status = 'Rejected';
+        req.approvalStage = 'Rejected';
+        req.rejectionReason = remarks || `Certificate rejected by ${faculty.role} (${faculty.name})`;
+        req.remarks = req.rejectionReason;
+      }
       updateODRequest(req);
     }
 

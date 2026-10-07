@@ -1,12 +1,13 @@
 import io
 import os
+import re
 import uuid
 import time
 from datetime import datetime
 from flask import Blueprint, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 
-from backend.routes.auth import login_required, role_required
+from backend.routes.auth import login_required, role_required, current_user
 from backend.models.academic_record import AcademicRecordModel, AcademicUploadHistoryModel
 from backend.models.user import UserModel
 from backend.database.mongodb import users_collection
@@ -64,7 +65,7 @@ def upload_and_preview_academic_excel():
     Does NOT update the database immediately; returns a preview structure and token.
     """
     _clean_expired_previews()
-    current_user = request.current_user
+    active_user = current_user
 
     if 'file' not in request.files and 'excel' not in request.files:
         return jsonify({
@@ -89,7 +90,7 @@ def upload_and_preview_academic_excel():
 
     try:
         file_bytes = io.BytesIO(file.read())
-        user_dept = current_user.get('department')
+        user_dept = active_user.get('department')
         result = parse_and_validate_academic_excel(file_bytes, allowed_department=user_dept)
 
         if not result.get('success'):
@@ -136,7 +137,7 @@ def confirm_academic_data_update():
     Updates existing student records (CAT 1, 2, 3, attendance percentage, timestamp).
     Logs the upload audit history.
     """
-    current_user = request.current_user
+    active_user = current_user
     data = request.get_json(silent=True) or {}
     preview_token = data.get('preview_token') or data.get('confirm_token')
     custom_rows = data.get('rows')
@@ -175,11 +176,11 @@ def confirm_academic_data_update():
         }), 400
 
     # Execute transactional update
-    ci_id = current_user.get('id') or 'FAC002'
-    ci_name = current_user.get('name') or 'Class Incharge'
+    ci_id = active_user.get('id') or 'FAC002'
+    ci_name = active_user.get('name') or 'Class Incharge'
 
     updated_records, err = AcademicRecordModel.batch_update_records(valid_rows, ci_id, ci_name)
-    if err:
+    if err or updated_records is None:
         # Audit failed upload
         AcademicUploadHistoryModel.create({
             'uploaded_by_id': ci_id,
@@ -190,12 +191,14 @@ def confirm_academic_data_update():
             'unmatched_count': len(unmatched_rows),
             'invalid_count': len(invalid_rows),
             'status': 'Failed',
-            'details': [{'error': err}]
+            'details': [{'error': err or 'Database update failed'}]
         })
         return jsonify({
             'success': False,
-            'error': f"Database update aborted: {err}. No student records were modified."
+            'error': f"Database update aborted: {err or 'Database update failed'}. No student records were modified."
         }), 500
+
+    updated_count = len(updated_records)
 
     # Audit successful/warning upload
     status_label = 'Completed' if (len(unmatched_rows) == 0 and len(invalid_rows) == 0) else 'Completed with warnings'
@@ -204,7 +207,7 @@ def confirm_academic_data_update():
         'uploaded_by_name': ci_name,
         'file_name': file_name,
         'total_rows': len(rows_to_process),
-        'successful_updates': len(updated_records),
+        'successful_updates': updated_count,
         'unmatched_count': len(unmatched_rows),
         'invalid_count': len(invalid_rows),
         'status': status_label,
@@ -217,8 +220,8 @@ def confirm_academic_data_update():
 
     return jsonify({
         'success': True,
-        'message': f"Academic data updated successfully. {len(updated_records)} student record(s) updated.",
-        'updated_count': len(updated_records),
+        'message': f"Academic data updated successfully. {updated_count} student record(s) updated.",
+        'updated_count': updated_count,
         'unmatched_count': len(unmatched_rows),
         'invalid_count': len(invalid_rows),
         'history_id': history_record.get('id') if history_record else None,
@@ -263,9 +266,9 @@ def get_academic_students_roster():
     Retrieve live roster of students with latest attendance %, CAT 1, 2, 3 marks,
     and computed 10% OD eligibility status.
     """
-    current_user = request.current_user
-    user_role = current_user.get('role')
-    user_dept = (current_user.get('department') or '').strip().lower()
+    active_user = current_user
+    user_role = active_user.get('role')
+    user_dept = (active_user.get('department') or '').strip().lower()
 
     col = users_collection()
     if col is None:
@@ -273,12 +276,13 @@ def get_academic_students_roster():
 
     query = {"role": {"$regex": "^student$", "$options": "i"}}
     if user_role in ['Class Incharge', 'Mentor'] and user_dept:
-        query["department"] = {"$regex": f"^{re_escape(current_user.get('department'))}$", "$options": "i"}
+        dept_str = str(active_user.get('department') or '')
+        query["department"] = {"$regex": f"^{re.escape(dept_str)}$", "$options": "i"}
 
     students = list(col.find(query, {"password_hash": 0, "password": 0}).sort("identifier", 1))
 
     # Retrieve all academic records
-    acad_docs = {a['student_id']: a for a in AcademicRecordModel.list_all()}
+    acad_docs = {a['student_id']: a for a in AcademicRecordModel.list_all() if a and 'student_id' in a}
 
     roster = []
     for s in students:
@@ -344,18 +348,18 @@ def get_academic_students_roster():
 @role_required('Student')
 def get_my_academic_details():
     """Allow authenticated student to view their own attendance, CAT marks, and OD allowance."""
-    current_user = request.current_user
-    sid = current_user.get('id')
-    reg_no = current_user.get('identifier') or sid
+    active_user = current_user
+    sid = active_user.get('id')
+    reg_no = active_user.get('identifier') or sid
 
     acad = AcademicRecordModel.get_by_student_id(sid) or AcademicRecordModel.get_by_register_number(reg_no)
     eligibility = calculate_od_eligibility(sid, requested_od_days=0.0)
 
     has_academic = acad is not None
-    att = acad.get('attendance_percentage') if acad else current_user.get('attendance_percentage')
-    c1 = acad.get('cat1_marks') if acad else current_user.get('cat1_marks')
-    c2 = acad.get('cat2_marks') if acad else current_user.get('cat2_marks')
-    c3 = acad.get('cat3_marks') if acad else current_user.get('cat3_marks')
+    att = acad.get('attendance_percentage') if acad else active_user.get('attendance_percentage')
+    c1 = acad.get('cat1_marks') if acad else active_user.get('cat1_marks')
+    c2 = acad.get('cat2_marks') if acad else active_user.get('cat2_marks')
+    c3 = acad.get('cat3_marks') if acad else active_user.get('cat3_marks')
 
     has_any_mark = c1 is not None or c2 is not None or c3 is not None or att is not None
 
@@ -395,9 +399,9 @@ def get_student_academic_detail(student_id):
     - Student: can view ONLY their own academic information.
     - Mentor / Faculty / Class Incharge / HOD: authorized by department / class.
     """
-    current_user = request.current_user
-    user_role = (current_user.get('role') or '').strip()
-    user_dept = (current_user.get('department') or '').strip().lower()
+    active_user = current_user
+    user_role = (active_user.get('role') or '').strip()
+    user_dept = (active_user.get('department') or '').strip().lower()
 
     acad = AcademicRecordModel.get_by_student_id(student_id) or AcademicRecordModel.get_by_register_number(student_id)
     target_user = UserModel.get_by_id(student_id) or UserModel.get_by_identifier(student_id)
@@ -408,15 +412,16 @@ def get_student_academic_detail(student_id):
             'error': f"Student record for identifier '{student_id}' was not found in the institution database."
         }), 404
 
-    target_id = target_user.get('id') if target_user else (acad.get('student_id') if acad else student_id)
-    target_reg = target_user.get('identifier') if target_user else (acad.get('register_number') if acad else student_id)
-    target_name = target_user.get('name') if target_user else (acad.get('student_name') if acad else 'Unknown')
-    target_dept = ((target_user.get('department') if target_user else None) or (acad.get('department') if acad else '')).strip().lower()
+    target_id = str((target_user.get('id') if target_user else (acad.get('student_id') if acad else None)) or student_id)
+    target_reg = str((target_user.get('identifier') if target_user else (acad.get('register_number') if acad else None)) or student_id)
+    target_name = (target_user.get('name') if target_user else (acad.get('student_name') if acad else None)) or 'Unknown'
+    user_dept_str = target_user.get('department') if target_user else (acad.get('department') if acad else '')
+    target_dept = (user_dept_str or '').strip().lower()
 
     # 1. Enforce Role-Based Access Controls
     if user_role.lower() == 'student':
-        current_id = current_user.get('id')
-        current_reg = current_user.get('identifier')
+        current_id = active_user.get('id')
+        current_reg = active_user.get('identifier')
         if current_id != target_id and current_reg != target_reg and student_id not in [current_id, current_reg]:
             return jsonify({
                 'success': False,
@@ -428,7 +433,7 @@ def get_student_academic_detail(student_id):
         if user_dept and target_dept and user_dept != target_dept:
             return jsonify({
                 'success': False,
-                'error': f"Access denied: You are not authorized to view academic data outside your department ({current_user.get('department')})."
+                'error': f"Access denied: You are not authorized to view academic data outside your department ({active_user.get('department')})."
             }), 403
     else:
         return jsonify({

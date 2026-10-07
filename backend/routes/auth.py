@@ -1,12 +1,35 @@
+"""Authentication and session management routes."""
+import os
+import sys
 import hmac
 import hashlib
 import time
 from functools import wraps
-from flask import Blueprint, request, jsonify, session, current_app
-from backend.models.user import UserModel
-from backend.database.mongodb import users_collection
+
+# Ensure project root is in sys.path so 'backend.*' imports succeed in all environments
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from flask import Blueprint, request, jsonify, session, current_app, g
+from werkzeug.local import LocalProxy
+try:
+    from backend.models.user import UserModel, validate_college_email
+    from backend.database.mongodb import users_collection
+except ImportError:
+    from models.user import UserModel, validate_college_email
+    from database.mongodb import users_collection
 
 auth_bp = Blueprint('auth', __name__)
+
+def get_authenticated_user():
+    """Retrieve current authenticated user from flask.g or fallback to session/token."""
+    user = getattr(g, 'current_user', None)
+    if user is not None:
+        return user
+    return get_current_authenticated_user()
+
+current_user = LocalProxy(get_authenticated_user)
 
 ROLE_DASHBOARDS = {
     'Student': '/student/dashboard',
@@ -22,7 +45,10 @@ ROLE_DASHBOARDS = {
 
 def generate_auth_token(user_id, role):
     """Generate a tamper-evident signed token for API authorization."""
-    secret = current_app.config.get('SECRET_KEY', 'od_tracking_system_rec_secret_key_2026')
+    try:
+        secret = current_app.config.get('SECRET_KEY', 'od_tracking_system_rec_secret_key_2026')
+    except RuntimeError:
+        secret = 'od_tracking_system_rec_secret_key_2026'
     timestamp = int(time.time())
     payload = f"{user_id}:{role}:{timestamp}"
     signature = hmac.new(secret.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()[:24]
@@ -38,7 +64,10 @@ def parse_auth_token(token):
             parts = raw.split(':')
             if len(parts) == 4:
                 user_id, role, timestamp_str, signature = parts
-                secret = current_app.config.get('SECRET_KEY', 'od_tracking_system_rec_secret_key_2026')
+                try:
+                    secret = current_app.config.get('SECRET_KEY', 'od_tracking_system_rec_secret_key_2026')
+                except RuntimeError:
+                    secret = 'od_tracking_system_rec_secret_key_2026'
                 payload = f"{user_id}:{role}:{timestamp_str}"
                 expected_sig = hmac.new(secret.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()[:24]
                 if hmac.compare_digest(signature, expected_sig):
@@ -83,7 +112,8 @@ def login_required(f):
         user = get_current_authenticated_user()
         if not user:
             return jsonify({'success': False, 'error': 'Authentication required. Please log in.'}), 401
-        request.current_user = user
+        g.current_user = user
+        setattr(request, 'current_user', user)
         return f(*args, **kwargs)
     return decorated_function
 
@@ -105,7 +135,8 @@ def role_required(*allowed_roles):
                     'userRole': user_role
                 }), 403
             
-            request.current_user = user
+            g.current_user = user
+            setattr(request, 'current_user', user)
             return f(*args, **kwargs)
         return decorated_function
     return decorator
@@ -116,7 +147,7 @@ def login():
     Authenticate user by username / email / register number + password against MongoDB users collection.
     Returns authenticated user profile, token, and target role-based dashboard URL.
     """
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     identifier = (data.get('identifier') or data.get('username') or data.get('email') or data.get('registerNo') or '').strip()
     password = (data.get('password') or '').strip()
     requested_role = (data.get('role') or '').strip()
@@ -143,9 +174,34 @@ def login():
             'error': 'Invalid password. Please verify your credentials and try again.'
         }), 401
 
+    # Check if account is disabled
+    if user.get('account_status') == 'DISABLED':
+        return jsonify({
+            'success': False,
+            'error': 'Account is disabled. Please contact the institution administrator.'
+        }), 401
+
+    # Check if email is unverified
+    if user.get('email_verified') is False or user.get('account_status') == 'UNVERIFIED':
+        return jsonify({
+            'success': False,
+            'error': 'Please verify your email before logging in. A verification link has been sent to your email.'
+        }), 401
+
     # If login initiated from a specific role portal, check role compatibility
     user_role = user['role']
-    if requested_role and requested_role.lower() != user_role.lower() and requested_role.lower() != (user.get('sub_role') or '').lower():
+    req_role_lower = requested_role.lower() if requested_role else ''
+    user_role_lower = user_role.lower()
+    sub_role_lower = (user.get('sub_role') or '').lower()
+
+    faculty_roles = {'faculty', 'mentor'}
+    role_matches = (
+        not requested_role or
+        req_role_lower == user_role_lower or
+        req_role_lower == sub_role_lower or
+        (req_role_lower in faculty_roles and user_role_lower in faculty_roles)
+    )
+    if not role_matches:
         return jsonify({
             'success': False,
             'error': f"Access restricted: You are registered as a {user_role}. Please log in via the {user_role} Portal."
@@ -160,6 +216,8 @@ def login():
     session['name'] = user['name']
 
     safe_user = UserModel.to_safe_dict(user)
+    if safe_user is None:
+        safe_user = {k: v for k, v in user.items() if k not in ('password_hash', 'password')}
     safe_user['userId'] = user['id']
     safe_user['token'] = token
 
@@ -173,6 +231,193 @@ def login():
         'dashboardUrl': dashboard_url
     }), 200
 
+@auth_bp.route('/register', methods=['POST'])
+def register():
+    """
+    Public student self-registration endpoint.
+    Restricts domain strictly to @rajalakshmi.edu.in.
+    Prohibits self-registration of privileged roles (Admin, HOD).
+    Account is created in UNVERIFIED state until email verification.
+    """
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip()
+    password = (data.get('password') or '').strip()
+    confirm_password = (data.get('confirmPassword') or data.get('confirm_password') or '').strip()
+    full_name = (data.get('fullName') or data.get('full_name') or data.get('name') or '').strip()
+    register_number = (data.get('registerNumber') or data.get('register_number') or data.get('identifier') or '').strip()
+    role = (data.get('role') or 'Student').strip()
+
+    if not email or not password or not confirm_password or not full_name:
+        return jsonify({
+            'success': False,
+            'error': 'All required fields (Full Name, College Email, Password, Confirm Password) must be provided.'
+        }), 400
+
+    if password != confirm_password:
+        return jsonify({
+            'success': False,
+            'error': 'Passwords do not match.'
+        }), 400
+
+    if len(password) < 6:
+        return jsonify({
+            'success': False,
+            'error': 'Password must be at least 6 characters long.'
+        }), 400
+
+    # 1. College email domain restriction
+    is_valid_email, norm_email = validate_college_email(email)
+    if not is_valid_email or not norm_email:
+        return jsonify({
+            'success': False,
+            'error': 'Registration is restricted to official college email addresses ending in @rajalakshmi.edu.in.'
+        }), 400
+
+    # 2. Block self-registration of privileged roles
+    if role.lower() in ['admin', 'hod']:
+        return jsonify({
+            'success': False,
+            'error': f'Privileged role ({role}) registration is restricted. Administrative accounts must be provisioned by IT.'
+        }), 400
+
+    # 3. Check for existing account
+    existing = UserModel.get_by_email(norm_email)
+    if existing:
+        return jsonify({
+            'success': False,
+            'error': 'An account with this institutional email already exists. Please log in or use forgot password.'
+        }), 400
+
+    if register_number:
+        existing_reg = UserModel.get_by_identifier(register_number)
+        if existing_reg:
+            return jsonify({
+                'success': False,
+                'error': f'An account with Register Number {register_number} already exists.'
+            }), 400
+
+    # 4. Generate verification token
+    import secrets
+    raw_verify_token = secrets.token_urlsafe(32)
+    verify_token_hash = hashlib.sha256(raw_verify_token.encode('utf-8')).hexdigest()
+
+    default_identifier = norm_email.split('@')[0] if norm_email else 'student'
+    user_data = {
+        'identifier': register_number or default_identifier,
+        'name': full_name,
+        'email': norm_email,
+        'password': password,
+        'role': role,
+        'email_verified': False,
+        'account_status': 'UNVERIFIED',
+        'verification_token_hash': verify_token_hash
+    }
+
+    created_user = UserModel.create_user(user_data)
+
+    return jsonify({
+        'success': True,
+        'unverified': True,
+        'message': 'Account registered successfully! Please check your institutional email to verify your account.',
+        'user': UserModel.to_safe_dict(created_user)
+    }), 201
+
+@auth_bp.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    """
+    Password reset request endpoint.
+    Mitigates account enumeration by returning an identical generic success message.
+    """
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+
+    if not email:
+        return jsonify({'success': False, 'error': 'College email is required.'}), 400
+
+    UserModel.create_password_reset_token(email)
+
+    return jsonify({
+        'success': True,
+        'message': 'If an account exists with this email address, a password reset link has been sent to your inbox.'
+    }), 200
+
+@auth_bp.route('/reset-password', methods=['POST'])
+def reset_password():
+    """Reset password using single-use secure reset token."""
+    data = request.get_json(silent=True) or {}
+    token = (data.get('token') or '').strip()
+    new_password = (data.get('newPassword') or data.get('new_password') or '').strip()
+    confirm_password = (data.get('confirmPassword') or data.get('confirm_password') or '').strip()
+
+    if not token or not new_password or not confirm_password:
+        return jsonify({'success': False, 'error': 'Token, new password, and confirm password are required.'}), 400
+
+    if new_password != confirm_password:
+        return jsonify({'success': False, 'error': 'New passwords do not match.'}), 400
+
+    if len(new_password) < 6:
+        return jsonify({'success': False, 'error': 'Password must be at least 6 characters long.'}), 400
+
+    success, msg = UserModel.reset_password(token, new_password)
+    if not success:
+        return jsonify({'success': False, 'error': msg}), 400
+
+    return jsonify({'success': True, 'message': msg}), 200
+
+@auth_bp.route('/change-password', methods=['POST'])
+@login_required
+def change_password():
+    """Change password for currently authenticated session."""
+    data = request.get_json(silent=True) or {}
+    current_password = (data.get('currentPassword') or data.get('current_password') or '').strip()
+    new_password = (data.get('newPassword') or data.get('new_password') or '').strip()
+    confirm_password = (data.get('confirmPassword') or data.get('confirm_password') or '').strip()
+
+    if not current_password or not new_password or not confirm_password:
+        return jsonify({'success': False, 'error': 'Current password, new password, and confirm password are required.'}), 400
+
+    if new_password != confirm_password:
+        return jsonify({'success': False, 'error': 'New passwords do not match.'}), 400
+
+    if len(new_password) < 6:
+        return jsonify({'success': False, 'error': 'New password must be at least 6 characters long.'}), 400
+
+    user = get_authenticated_user()
+    if not user:
+        return jsonify({'success': False, 'error': 'Authentication required.'}), 401
+    success, msg = UserModel.change_password(user['id'], new_password, current_password)
+    if not success:
+        return jsonify({'success': False, 'error': msg}), 400
+
+    return jsonify({'success': True, 'message': msg}), 200
+
+@auth_bp.route('/verify-email', methods=['POST', 'GET'])
+def verify_email():
+    """Verify email address using verification token."""
+    token = request.args.get('token') or ((request.get_json(silent=True) or {}).get('token'))
+    if not token:
+        return jsonify({'success': False, 'error': 'Verification token is required.'}), 400
+
+    token_hash = hashlib.sha256(token.strip().encode('utf-8')).hexdigest()
+    col = users_collection()
+    if col is None:
+        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
+    user = col.find_one({"verification_token_hash": token_hash})
+    if not user:
+        return jsonify({'success': False, 'error': 'Invalid verification link or token already used.'}), 400
+
+    from datetime import datetime
+    col.update_one(
+        {"_id": user['_id']},
+        {"$set": {
+            "email_verified": True,
+            "account_status": "ACTIVE",
+            "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }, "$unset": {"verification_token_hash": ""}}
+    )
+
+    return jsonify({'success': True, 'message': 'Email verified successfully! You may now log in.'}), 200
+
 @auth_bp.route('/me', methods=['GET'])
 def get_current_user():
     """Retrieve currently authenticated user profile from session or Bearer token."""
@@ -182,6 +427,8 @@ def get_current_user():
 
     role = user['role']
     safe_user = UserModel.to_safe_dict(user)
+    if safe_user is None:
+        safe_user = {k: v for k, v in user.items() if k not in ('password_hash', 'password')}
     safe_user['userId'] = user['id']
 
     return jsonify({
@@ -201,7 +448,9 @@ def logout():
 @login_required
 def check_protected_access():
     """Verify authenticated user access and role status."""
-    user = request.current_user
+    user = get_authenticated_user()
+    if not user:
+        return jsonify({'success': False, 'error': 'Authentication required.'}), 401
     return jsonify({
         'success': True,
         'message': f"Access granted for {user['name']} ({user['role']})",
@@ -231,6 +480,8 @@ def list_demo_users():
     """List available demo users and their target dashboards for testing."""
     users = UserModel.list_all()
     for item in users:
-        item['dashboardUrl'] = ROLE_DASHBOARDS.get(item['role'], '/student/dashboard')
+        if item is not None:
+            role_key = item.get('role', 'Student') or 'Student'
+            item['dashboardUrl'] = ROLE_DASHBOARDS.get(role_key, '/student/dashboard')
 
     return jsonify({'users': users}), 200

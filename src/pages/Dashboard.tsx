@@ -62,10 +62,81 @@ export const Dashboard: React.FC = () => {
     return () => window.removeEventListener('odStateUpdated', loadData);
   }, []);
 
+  const [currentTime, setCurrentTime] = useState<Date>(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 5000);
+    return () => clearInterval(timer);
+  }, []);
+
   const totalRequests = requests.length;
   const pendingRequests = requests.filter(r => r.status === 'Pending').length;
-  const approvedRequests = requests.filter(r => r.status === 'Approved' || r.status === 'Mentor Approved' || r.status === 'Class Incharge Approved').length;
-  const rejectedRequests = requests.filter(r => r.status === 'Rejected' || r.status === 'Mentor Rejected' || r.status === 'Class Incharge Rejected').length;
+  const approvedRequests = requests.filter(r => r.status === 'Approved' || r.status === 'Completed').length;
+  const rejectedRequests = requests.filter(r => r.status === 'Rejected' || r.status === 'Certificate Deadline Expired' || r.status === 'Mentor Rejected' || r.status === 'Class Incharge Rejected' || r.status === 'HOD Rejected').length;
+
+  // Requirement 7 & 11: Active certificate upload windows
+  const certActionRequests = requests.filter(r => {
+    const isHodApproved = r.status === 'HOD Approved - Certificate Pending' || r.status === 'HOD Approved';
+    const notUploaded = r.certificateStatus !== 'Verified' && r.certificateStatus !== 'Pending Verification';
+    return isHodApproved && notUploaded;
+  }).map(r => {
+    const toDateStr = r.toDate || r.fromDate || r.eventDate;
+    const toTimeStr = r.toTime || '17:00';
+    const endDt = r.eventEndDatetime ? new Date(r.eventEndDatetime) : new Date(`${toDateStr}T${toTimeStr}:00`);
+    let deadlineDt = r.certificateDeadline ? new Date(r.certificateDeadline) : null;
+    if (!deadlineDt || isNaN(deadlineDt.getTime())) {
+      if (!isNaN(endDt.getTime())) {
+        deadlineDt = new Date(endDt.getTime() + 24 * 60 * 60 * 1000);
+      }
+    }
+
+    const hasEnded = !isNaN(endDt.getTime()) && currentTime >= endDt;
+    const isExpired = deadlineDt && !isNaN(deadlineDt.getTime()) && currentTime > deadlineDt;
+    const isWindowActive = hasEnded && !isExpired;
+
+    let remainingText = '';
+    if (isWindowActive && deadlineDt) {
+      const diffMs = deadlineDt.getTime() - currentTime.getTime();
+      const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
+      const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+      remainingText = `${diffHrs} hours ${diffMins} minutes`;
+    }
+
+    return {
+      request: r,
+      endDt,
+      deadlineDt,
+      hasEnded,
+      isExpired,
+      isWindowActive,
+      remainingText
+    };
+  });
+
+  const getDashboardStatusDisplay = (req: ODRequest) => {
+    if (req.status === 'Approved' || req.status === 'Completed') {
+      return 'OD Completed';
+    }
+    if (req.status === 'Certificate Submitted') {
+      return 'Certificate Submitted — Verification Pending';
+    }
+    if (req.status === 'Rejected' || req.certificateStatus === 'Deadline Expired') {
+      if (req.certificateStatus === 'Deadline Expired' || (req.rejectionReason || '').includes('24 hours')) {
+        return 'OD Rejected — Certificate Not Submitted Within 24 Hours';
+      }
+      return 'OD Rejected';
+    }
+    if (req.status === 'HOD Approved - Certificate Pending' || req.status === 'HOD Approved') {
+      const toDateStr = req.toDate || req.fromDate || req.eventDate;
+      const toTimeStr = req.toTime || '17:00';
+      const endDt = req.eventEndDatetime ? new Date(req.eventEndDatetime) : new Date(`${toDateStr}T${toTimeStr}:00`);
+      if (!isNaN(endDt.getTime()) && currentTime >= endDt) {
+        return 'Certificate Upload Required';
+      }
+      return 'HOD Approved — Certificate Pending';
+    }
+    return req.status;
+  };
 
   const quickActions = [
     { label: 'Apply for OD', icon: FilePlus2, path: '/student/apply', color: 'bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200/50' },
@@ -111,6 +182,53 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Requirement 7: Active Certificate Upload Countdown Banner */}
+      {certActionRequests.filter(c => c.isWindowActive).map(({ request, endDt, deadlineDt, remainingText }) => (
+        <div 
+          key={request.id} 
+          className="bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-3xl p-5 md:p-6 shadow-lg border border-amber-400/40 relative overflow-hidden"
+        >
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-0.5 text-[10px] font-black uppercase tracking-wider bg-white/20 border border-white/30 rounded-full animate-pulse">
+                  24-Hour Certificate Window Active
+                </span>
+                <span className="text-xs font-bold text-amber-100">{request.id}</span>
+              </div>
+              <h3 className="text-lg md:text-xl font-black tracking-tight">
+                Certificate Upload Required: {request.eventName}
+              </h3>
+              <p className="text-xs text-amber-100 leading-relaxed max-w-2xl">
+                Certificate must be uploaded within 24 hours of the event ending. Failure to upload before the deadline will cause automatic rejection.
+              </p>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-xs font-semibold">
+                <div className="bg-black/20 p-2.5 rounded-xl">
+                  <span className="text-[10px] text-amber-200 block uppercase tracking-wider font-bold">Event Ended</span>
+                  <span>{!isNaN(endDt.getTime()) ? endDt.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                </div>
+                <div className="bg-black/20 p-2.5 rounded-xl">
+                  <span className="text-[10px] text-amber-200 block uppercase tracking-wider font-bold">Certificate Deadline</span>
+                  <span>{deadlineDt && !isNaN(deadlineDt.getTime()) ? deadlineDt.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                </div>
+                <div className="bg-white/20 p-2.5 rounded-xl border border-white/30 text-white font-black">
+                  <span className="text-[10px] text-white/80 block uppercase tracking-wider font-bold">Time Remaining</span>
+                  <span className="text-sm font-black">{remainingText}</span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => navigate('/student/certificates')}
+              className="self-start md:self-center px-5 py-3 bg-white text-amber-700 hover:bg-amber-50 font-black text-xs md:text-sm rounded-2xl shadow-md transition-all shrink-0 hover:scale-105"
+            >
+              Upload Certificate Now →
+            </button>
+          </div>
+        </div>
+      ))}
 
       {/* 2. Academic Performance Section */}
       <div className="bg-white rounded-3xl p-5 md:p-6 border border-slate-200/80 shadow-xs">
@@ -346,7 +464,7 @@ export const Dashboard: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-3.5">
-                      <StatusBadge status={req.status} size="sm" />
+                      <StatusBadge status={getDashboardStatusDisplay(req)} size="sm" />
                     </td>
                     <td className="py-3.5 hidden lg:table-cell">
                       <span className="text-slate-500 font-medium">{req.approvalStage}</span>

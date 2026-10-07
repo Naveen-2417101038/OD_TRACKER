@@ -223,7 +223,7 @@ class AcademicUploadHistoryModel:
         if col is None:
             return None
 
-        history_id = data.get('id') or f"UPL_{datetime.now().strftime('%Y%m%d%H%M%S')}_{str(uuid.uuid4().hex[:6]).upper()}"
+        history_id = data.get('id') or f"UPL_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6].upper()}"
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         doc = {

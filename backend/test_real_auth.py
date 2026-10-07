@@ -5,29 +5,61 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import unittest
 import json
 from backend.app import create_app
-from backend.database import init_db, get_db_connection, PostgreSQLDB
-from backend.models.db_models import User
+
+try:
+    from backend.database.postgresql import init_db as init_pg_db, get_db_connection, PostgreSQLDB
+    from backend.models.db_models import User
+except ImportError:
+    init_pg_db = None
+    get_db_connection, PostgreSQLDB = None, None
+    User = None
+
+from backend.database.mongodb import init_db as init_mongo_db, users_collection
 from backend.models.user import UserModel, validate_college_email
 
 class RealAuthenticationSystemTestCase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        init_db()
+        init_mongo_db()
+        if init_pg_db:
+            try:
+                init_pg_db()
+            except Exception:
+                pass
         cls.app = create_app()
         cls.app.config['TESTING'] = True
         cls.client = cls.app.test_client()
 
     def setUp(self):
         with self.app.app_context():
-            PostgreSQLDB.close_session()
-            conn = get_db_connection()
-            # Clean up test accounts (keep default seed accounts)
-            conn.execute("DELETE FROM audit_logs WHERE user_email LIKE '%@rajalakshmi.edu.in'")
-            conn.execute("DELETE FROM users WHERE email NOT IN ('naveen.23csd@rajalakshmi.edu.in', 'a.rajesh@rajalakshmi.edu.in', 'k.shanthi@rajalakshmi.edu.in', 'p.counsellor@rajalakshmi.edu.in', 'v.karpagam@rajalakshmi.edu.in', 'admin@rajalakshmi.edu.in')")
-            conn.commit()
-            conn.close()
-            PostgreSQLDB.close_session()
+            col = users_collection()
+            if col is not None:
+                col.delete_many({
+                    'email': {
+                        '$nin': [
+                            'naveen.23csd@rajalakshmi.edu.in',
+                            'a.rajesh@rajalakshmi.edu.in',
+                            'k.shanthi@rajalakshmi.edu.in',
+                            'p.counsellor@rajalakshmi.edu.in',
+                            'v.karpagam@rajalakshmi.edu.in',
+                            'admin@rajalakshmi.edu.in'
+                        ]
+                    }
+                })
+            if PostgreSQLDB:
+                PostgreSQLDB.close_session()
+            if get_db_connection:
+                try:
+                    conn = get_db_connection()
+                    conn.execute("DELETE FROM audit_logs WHERE user_email LIKE '%@rajalakshmi.edu.in'")
+                    conn.execute("DELETE FROM users WHERE email NOT IN ('naveen.23csd@rajalakshmi.edu.in', 'a.rajesh@rajalakshmi.edu.in', 'k.shanthi@rajalakshmi.edu.in', 'p.counsellor@rajalakshmi.edu.in', 'v.karpagam@rajalakshmi.edu.in', 'admin@rajalakshmi.edu.in')")
+                    conn.commit()
+                    conn.close()
+                except Exception:
+                    pass
+                if PostgreSQLDB:
+                    PostgreSQLDB.close_session()
 
     def test_01_college_email_domain_restriction(self):
         """Verify that ONLY @rajalakshmi.edu.in emails are accepted."""
@@ -85,25 +117,36 @@ class RealAuthenticationSystemTestCase(unittest.TestCase):
         self.assertFalse(unverified_data['success'])
         self.assertIn('verify your email', unverified_data['error'].lower())
 
-        # 3. Retrieve verification token hash directly from PostgreSQL DB to simulate link click
-        conn = get_db_connection()
-        user_row = conn.execute("SELECT verification_token_hash FROM users WHERE email = ?", (test_email,)).fetchone()
-        conn.close()
-        self.assertIsNotNone(user_row)
-
-        # Retrieve raw verification token through helper or verify direct verification token function
+        # 3. Retrieve verification token hash directly to simulate link click
         user_dict = UserModel.get_by_email(test_email)
+        self.assertIsNotNone(user_dict)
+        self.assertIsNotNone(user_dict.get('verification_token_hash'))
         self.assertFalse(user_dict['email_verified'])
         self.assertEqual(user_dict['account_status'], 'UNVERIFIED')
 
+        if get_db_connection:
+            try:
+                conn = get_db_connection()
+                user_row = conn.execute("SELECT verification_token_hash FROM users WHERE email = ?", (test_email,)).fetchone()
+                conn.close()
+                if user_row:
+                    self.assertIsNotNone(user_row)
+            except Exception:
+                pass
+
         # 4. Verify email token via UserModel
-        raw_token = None
-        session = PostgreSQLDB.get_session()
-        u_obj = session.query(User).filter_by(email=test_email).first()
-        u_obj.email_verified = True
-        u_obj.account_status = 'ACTIVE'
-        session.commit()
-        session.close()
+        UserModel.verify_email(test_email)
+        if PostgreSQLDB and User:
+            try:
+                session = PostgreSQLDB.get_session()
+                u_obj = session.query(User).filter_by(email=test_email).first()
+                if u_obj:
+                    u_obj.email_verified = True
+                    u_obj.account_status = 'ACTIVE'
+                    session.commit()
+                session.close()
+            except Exception:
+                pass
 
         # 5. Attempt login after verification -> MUST SUCCEED
         login_verified = self.client.post('/api/auth/login', json={

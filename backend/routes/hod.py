@@ -7,10 +7,11 @@ from flask import Blueprint, request, jsonify, send_from_directory, send_file, m
 from backend.models.od_request import ODRequestModel
 from backend.models.user import UserModel
 from backend.models.certificate import CertificateModel
-from backend.routes.auth import role_required
+from backend.routes.auth import role_required, current_user
 from backend.config import Config
 
 import openpyxl
+from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
@@ -163,7 +164,7 @@ def get_hod_od_requests():
     Retrieve all OD requests within the HOD's department oversight.
     Supports query parameter filters (search, event_type, status, date range, etc.).
     """
-    hod_user = request.current_user
+    hod_user = current_user
     all_requests = ODRequestModel.list_for_hod(hod_user)
 
     # Apply filters if provided in query parameters
@@ -180,7 +181,7 @@ def get_hod_od_requests():
     ]
     approved_requests = [
         r for r in filtered_requests 
-        if r.get('status') in ['Approved', 'HOD Approved']
+        if r.get('status') in ['Approved', 'HOD Approved', 'HOD Approved - Certificate Pending', 'Certificate Submitted']
     ]
     rejected_requests = [
         r for r in filtered_requests 
@@ -221,7 +222,7 @@ def export_hod_od_excel():
     Export OD Request records as a professionally formatted Excel spreadsheet (.xlsx).
     Respects all active filter parameters (event name, event type, date range, status, student, etc.).
     """
-    hod_user = request.current_user
+    hod_user = current_user
     all_requests = ODRequestModel.list_for_hod(hod_user)
 
     # Read all filter parameters
@@ -231,10 +232,13 @@ def export_hod_od_excel():
     # Create OpenPyXL workbook
     wb = openpyxl.Workbook()
     ws = wb.active
+    if not isinstance(ws, Worksheet):
+        ws = wb.create_sheet("OD Requests Report")
+    assert isinstance(ws, Worksheet)
     ws.title = "OD Requests Report"
 
     # Ensure grid lines are visible
-    ws.views.sheetView[0].showGridLines = True
+    ws.sheet_view.showGridLines = True
 
     # Color definitions
     PRIMARY_COLOR = "1E1B4B"      # Dark Indigo
@@ -300,8 +304,7 @@ def export_hod_od_excel():
 
     # Title Banner (Row 1)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
-    title_cell = ws.cell(row=1, column=1)
-    title_cell.value = "RAJALAKSHMI ENGINEERING COLLEGE (AUTONOMOUS) — ON-DUTY (OD) TRACKING REPORT"
+    title_cell = ws.cell(row=1, column=1, value="RAJALAKSHMI ENGINEERING COLLEGE (AUTONOMOUS) — ON-DUTY (OD) TRACKING REPORT")
     title_cell.font = TITLE_FONT
     title_cell.fill = TITLE_FILL
     title_cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -311,12 +314,15 @@ def export_hod_od_excel():
     dept_name = hod_user.get('department') or 'Computer Science and Design'
     gen_time = datetime.now().strftime('%d-%b-%Y %I:%M %p')
     filter_desc_items = []
-    if filters.get('event_type') and filters.get('event_type').lower() != 'all':
-        filter_desc_items.append(f"Event Type: {filters.get('event_type')}")
-    if filters.get('event_name'):
-        filter_desc_items.append(f"Event: {filters.get('event_name')}")
-    if filters.get('status') and filters.get('status').lower() != 'all':
-        filter_desc_items.append(f"Status: {filters.get('status')}")
+    event_type_val = filters.get('event_type')
+    if event_type_val and event_type_val.lower() != 'all':
+        filter_desc_items.append(f"Event Type: {event_type_val}")
+    event_name_val = filters.get('event_name')
+    if event_name_val:
+        filter_desc_items.append(f"Event: {event_name_val}")
+    status_val = filters.get('status')
+    if status_val and status_val.lower() != 'all':
+        filter_desc_items.append(f"Status: {status_val}")
     if filters.get('from_date') or filters.get('to_date'):
         d_from = filters.get('from_date', 'Start')
         d_to = filters.get('to_date', 'End')
@@ -325,8 +331,7 @@ def export_hod_od_excel():
     filter_desc = " | Filters: " + ", ".join(filter_desc_items) if filter_desc_items else " | Filters: All Records"
 
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=total_cols)
-    sub_cell = ws.cell(row=2, column=1)
-    sub_cell.value = f"Department: {dept_name} | Generated On: {gen_time} | Total Matching Records: {len(matching_records)}{filter_desc}"
+    sub_cell = ws.cell(row=2, column=1, value=f"Department: {dept_name} | Generated On: {gen_time} | Total Matching Records: {len(matching_records)}{filter_desc}")
     sub_cell.font = SUBTITLE_FONT
     sub_cell.fill = SUBTITLE_FILL
     sub_cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -338,8 +343,7 @@ def export_hod_od_excel():
     # Header Row (Row 4)
     ws.row_dimensions[4].height = 28
     for col_num, header_text in enumerate(headers, 1):
-        cell = ws.cell(row=4, column=col_num)
-        cell.value = header_text
+        cell = ws.cell(row=4, column=col_num, value=header_text)
         cell.font = HEADER_FONT
         cell.fill = HEADER_FILL
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -415,8 +419,8 @@ def export_hod_od_excel():
 
         if cert_status == 'Verified':
             final_status = "Completed & Verified"
-        elif overall_status in ['Approved', 'HOD Approved']:
-            final_status = "Approved - Awaiting Certificate" if cert_status == 'Not Uploaded' else f"Approved ({cert_status})"
+        elif overall_status in ['Approved', 'HOD Approved', 'HOD Approved - Certificate Pending', 'Certificate Submitted']:
+            final_status = "Approved - Awaiting Certificate" if cert_status in ['Not Uploaded', 'Pending Upload'] else f"Approved ({cert_status})"
         elif 'Rejected' in overall_status:
             final_status = "Rejected"
         else:
@@ -509,8 +513,7 @@ def export_hod_od_excel():
     if not matching_records:
         ws.row_dimensions[row_idx].height = 30
         ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=total_cols)
-        empty_cell = ws.cell(row=row_idx, column=1)
-        empty_cell.value = "No OD requests match the currently selected filter criteria."
+        empty_cell = ws.cell(row=row_idx, column=1, value="No OD requests match the currently selected filter criteria.")
         empty_cell.font = Font(name="Calibri", size=11, italic=True, color="64748B")
         empty_cell.alignment = Alignment(horizontal="center", vertical="center")
         empty_cell.fill = ZEBRA_FILL
@@ -521,8 +524,7 @@ def export_hod_od_excel():
     summary_row = row_idx + 1
     ws.row_dimensions[summary_row].height = 26
     ws.merge_cells(start_row=summary_row, start_column=1, end_row=summary_row, end_column=4)
-    sum_title_cell = ws.cell(row=summary_row, column=1)
-    sum_title_cell.value = f"EXECUTIVE SUMMARY: {len(matching_records)} Total Records"
+    sum_title_cell = ws.cell(row=summary_row, column=1, value=f"EXECUTIVE SUMMARY: {len(matching_records)} Total Records")
     sum_title_cell.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     sum_title_cell.fill = HEADER_FILL
     sum_title_cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -533,23 +535,19 @@ def export_hod_od_excel():
     verified_cert_cnt = len([r for r in matching_records if r.get('certificateStatus') == 'Verified'])
 
     ws.merge_cells(start_row=summary_row, start_column=5, end_row=summary_row, end_column=total_cols)
-    sum_val_cell = ws.cell(row=summary_row, column=5)
-    sum_val_cell.value = f"Approved: {approved_cnt} | Pending: {pending_cnt} | Rejected: {rejected_cnt} | Verified Certificates: {verified_cert_cnt}"
+    sum_val_cell = ws.cell(row=summary_row, column=5, value=f"Approved: {approved_cnt} | Pending: {pending_cnt} | Rejected: {rejected_cnt} | Verified Certificates: {verified_cert_cnt}")
     sum_val_cell.font = Font(name="Calibri", size=10, bold=True, color="1E1B4B")
     sum_val_cell.fill = SUBTITLE_FILL
     sum_val_cell.alignment = Alignment(horizontal="left", vertical="center")
 
     # Auto-adjust column widths
-    for col in ws.columns:
-        col_letter = get_column_letter(col[0].column)
+    for col_idx in range(1, total_cols + 1):
+        col_letter = get_column_letter(col_idx)
         max_len = 0
-        for cell in col:
-            # Avoid title merged cells
-            if cell.row in [1, 2, 3, summary_row]:
-                continue
-            if cell.value is not None:
-                val_str = str(cell.value)
-                max_len = max(max_len, len(val_str))
+        for r_idx in range(4, row_idx):
+            c_val = ws.cell(row=r_idx, column=col_idx).value
+            if c_val is not None:
+                max_len = max(max_len, len(str(c_val)))
         ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
     # Save to memory buffer
@@ -570,7 +568,7 @@ def export_hod_od_excel():
 @role_required('HOD')
 def get_hod_od_request_detail(request_id):
     """Retrieve full details of a specific OD request for HOD executive review."""
-    hod_user = request.current_user
+    hod_user = current_user
     req = ODRequestModel.get_by_id(request_id)
 
     if not req:
@@ -601,7 +599,7 @@ def approve_od_request_by_hod(request_id):
     - Logs decision in approvals and od_history collections
     - Notifies student that certificate upload is unlocked
     """
-    hod_user = request.current_user
+    hod_user = current_user
     data = request.get_json(silent=True) or {}
     remarks = (data.get('remarks') or data.get('comments') or '').strip()
 
@@ -629,8 +627,8 @@ def approve_od_request_by_hod(request_id):
         'success': True,
         'message': f"OD Request {request_id} has been officially approved and sanctioned by HOD.",
         'request': updated_req,
-        'status': updated_req.get('status'),
-        'currentStage': updated_req.get('currentStage')
+        'status': updated_req.get('status') if updated_req else None,
+        'currentStage': updated_req.get('currentStage') if updated_req else None
     }), 200
 
 @hod_bp.route('/od-requests/<request_id>/reject', methods=['POST'])
@@ -643,7 +641,7 @@ def reject_od_request_by_hod(request_id):
     - Updates status to 'HOD Rejected'
     - Logs decision in approvals and od_history collections
     """
-    hod_user = request.current_user
+    hod_user = current_user
     data = request.get_json(silent=True) or {}
     reason = (data.get('reason') or data.get('remarks') or data.get('comments') or '').strip()
 
@@ -677,15 +675,15 @@ def reject_od_request_by_hod(request_id):
         'success': True,
         'message': f"OD Request {request_id} has been declined by HOD.",
         'request': updated_req,
-        'status': updated_req.get('status'),
-        'rejectionReason': updated_req.get('rejectionReason')
+        'status': updated_req.get('status') if updated_req else None,
+        'rejectionReason': updated_req.get('rejectionReason') if updated_req else None
     }), 200
 
 @hod_bp.route('/stats', methods=['GET'])
 @role_required('HOD')
 def get_hod_department_stats():
     """Compute live department analytics and statistics for HOD dashboard."""
-    hod_user = request.current_user
+    hod_user = current_user
     all_requests = ODRequestModel.list_for_hod(hod_user)
 
     total = len(all_requests)
@@ -724,7 +722,7 @@ def view_hod_od_letter(request_id):
     Securely download/view the uploaded OD letter for an assigned request.
     Prevents unauthorized access and directory traversal.
     """
-    hod_user = request.current_user
+    hod_user = current_user
     req = ODRequestModel.get_by_id(request_id)
 
     if not req:

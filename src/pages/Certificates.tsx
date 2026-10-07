@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { getCertificates, uploadCertificate, getODRequests, simulateVerifyCertificate } from '../data/mockData';
+import { getCertificates, uploadCertificate, getODRequests, simulateVerifyCertificate, getAuthSession } from '../data/mockData';
 import { CertificateItem, ODRequest } from '../types/types';
 import { Card } from '../components/Card';
 import { StatusBadge } from '../components/StatusBadge';
 import { 
   Award, Upload, ShieldCheck, ShieldAlert, FileText, CheckCircle, 
-  Trash2, X, PlusCircle, ArrowUpCircle, Eye, EyeOff
+  Trash2, X, PlusCircle, ArrowUpCircle, Eye, EyeOff, AlertCircle, Clock
 } from 'lucide-react';
 import { useToast } from '../components/Toast';
+import { apiUploadCertificate } from '../services/api';
 
 export const Certificates: React.FC = () => {
   const { showToast } = useToast();
@@ -19,22 +20,64 @@ export const Certificates: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [now, setNow] = useState<Date>(new Date());
 
   const loadData = () => {
     setCertificates(getCertificates());
-    // Only show approved/pending requests for which a certificate can be uploaded
-    setRequests(getODRequests().filter(r => r.status !== 'Rejected'));
+    // Only show HOD Approved requests eligible for certificate upload
+    setRequests(
+      getODRequests().filter(r => 
+        r.status === 'HOD Approved - Certificate Pending' || 
+        r.status === 'HOD Approved' ||
+        r.status === 'Certificate Submitted' ||
+        r.status === 'Approved'
+      )
+    );
   };
 
   useEffect(() => {
     loadData();
+    const timer = setInterval(() => setNow(new Date()), 5000);
     
     // Listen for simulator events
     window.addEventListener('odStateUpdated', loadData);
-    return () => window.removeEventListener('odStateUpdated', loadData);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('odStateUpdated', loadData);
+    };
   }, []);
 
-  const handleUploadSubmit = (e: React.FormEvent) => {
+  const selectedReq = requests.find(r => r.id === selectedReqId);
+  const getSelectedTimingInfo = () => {
+    if (!selectedReq) return null;
+    const toDateStr = selectedReq.toDate || selectedReq.fromDate || selectedReq.eventDate;
+    const toTimeStr = selectedReq.toTime || '17:00';
+    const endDt = selectedReq.eventEndDatetime ? new Date(selectedReq.eventEndDatetime) : new Date(`${toDateStr}T${toTimeStr}:00`);
+    let deadlineDt = selectedReq.certificateDeadline ? new Date(selectedReq.certificateDeadline) : null;
+    if (!deadlineDt || isNaN(deadlineDt.getTime())) {
+      if (!isNaN(endDt.getTime())) {
+        deadlineDt = new Date(endDt.getTime() + 24 * 60 * 60 * 1000);
+      }
+    }
+
+    const beforeEvent = !isNaN(endDt.getTime()) && now < endDt;
+    const deadlineExpired = deadlineDt && !isNaN(deadlineDt.getTime()) && now > deadlineDt;
+    const windowActive = !beforeEvent && !deadlineExpired;
+
+    let countdown = '';
+    if (windowActive && deadlineDt) {
+      const diffMs = deadlineDt.getTime() - now.getTime();
+      const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
+      const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+      countdown = `${diffHrs} hours ${diffMins} minutes`;
+    }
+
+    return { endDt, deadlineDt, beforeEvent, deadlineExpired, windowActive, countdown };
+  };
+
+  const timingInfo = getSelectedTimingInfo();
+
+  const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedReqId) {
       showToast('Please select a valid OD Request.', 'error');
@@ -45,27 +88,46 @@ export const Certificates: React.FC = () => {
       return;
     }
 
+    if (timingInfo?.beforeEvent) {
+      showToast('Certificate upload will be available after the event ends.', 'error');
+      return;
+    }
+
+    if (timingInfo?.deadlineExpired) {
+      showToast('Certificate upload deadline has expired. The OD has been rejected.', 'error');
+      return;
+    }
+
     setIsUploading(true);
 
-    setTimeout(() => {
-      setIsUploading(false);
-      const req = requests.find(r => r.id === selectedReqId);
-      if (req) {
-        uploadCertificate(selectedReqId, req.eventName, file.name);
-        showToast('Certificate uploaded successfully. Pending verification.', 'success');
-        
-        // Clear state
-        setSelectedReqId('');
-        setFile(null);
-        setShowUploadModal(false);
-        loadData();
-        
-        // Refresh simulator
-        if ((window as any).refreshSimulator) {
-          (window as any).refreshSimulator();
-        }
+    const session = getAuthSession();
+    const req = requests.find(r => r.id === selectedReqId);
+
+    // Call backend API if authenticated session
+    if (session?.token) {
+      const res = await apiUploadCertificate(selectedReqId, file, session.token);
+      if (!res.success) {
+        setIsUploading(false);
+        showToast(res.error || 'Failed to upload certificate.', 'error');
+        return;
       }
-    }, 1500);
+    }
+
+    // Update local state
+    if (req) {
+      uploadCertificate(selectedReqId, req.eventName, file);
+      showToast('Certificate uploaded successfully. Pending verification.', 'success');
+      
+      setSelectedReqId('');
+      setFile(null);
+      setShowUploadModal(false);
+      loadData();
+      
+      if ((window as any).refreshSimulator) {
+        (window as any).refreshSimulator();
+      }
+    }
+    setIsUploading(false);
   };
 
   const handleSimulateVerify = (id: string, status: 'Verified' | 'Rejected') => {
@@ -222,6 +284,50 @@ export const Certificates: React.FC = () => {
                 </select>
               </div>
 
+              {/* Timing & Deadline Feedback Banner */}
+              {timingInfo && (
+                <div>
+                  {timingInfo.beforeEvent && (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-800">
+                      <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold">Upload Locked (Event In Progress)</p>
+                        <p className="text-[11px] text-amber-700 mt-0.5">
+                          Certificate upload will be available after the event ends on {timingInfo.endDt.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {timingInfo.deadlineExpired && (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2.5 text-xs text-rose-800">
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold">Deadline Expired</p>
+                        <p className="text-[11px] text-rose-700 mt-0.5">
+                          Certificate upload deadline has expired. The OD has been rejected.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {timingInfo.windowActive && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-xs text-emerald-800">
+                      <Clock className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5 animate-pulse" />
+                      <div>
+                        <p className="font-bold">24-Hour Certificate Window Active</p>
+                        <p className="text-[11px] text-emerald-700 mt-0.5">
+                          Time remaining: <span className="font-black text-emerald-800">{timingInfo.countdown}</span>
+                        </p>
+                        <p className="text-[10px] text-emerald-600 mt-0.5">
+                          Deadline: {timingInfo.deadlineDt ? timingInfo.deadlineDt.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Select file */}
               <div className="space-y-1">
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Upload PDF / image</label>
@@ -239,6 +345,7 @@ export const Certificates: React.FC = () => {
                         type="file"
                         className="hidden"
                         required
+                        disabled={Boolean(timingInfo?.beforeEvent || timingInfo?.deadlineExpired)}
                         onChange={(e) => setFile(e.target.files ? e.target.files[0] : null)}
                         accept="application/pdf,image/*"
                       />
@@ -259,8 +366,8 @@ export const Certificates: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={isUploading}
-                  className="bg-primary-600 hover:bg-primary-700 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-md shadow-primary-200 flex items-center gap-1.5"
+                  disabled={Boolean(isUploading || timingInfo?.beforeEvent || timingInfo?.deadlineExpired)}
+                  className="bg-primary-600 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-4 py-2 rounded-xl text-xs shadow-md shadow-primary-200 flex items-center gap-1.5"
                 >
                   {isUploading ? (
                     <>

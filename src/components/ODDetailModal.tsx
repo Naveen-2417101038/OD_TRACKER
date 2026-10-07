@@ -337,23 +337,47 @@ export const ODDetailModal: React.FC<ODDetailModalProps> = ({
                 </span>
               </div>
 
-              {request.documentUrl ? (
+              {/* Certificate Submission & Deadline Status Details (Requirement 12) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-xs">
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase block">Event End Time</span>
+                  <span className="font-semibold text-slate-800">
+                    {request.eventEndDatetime || `${request.toDate || request.eventDate} ${request.toTime || '17:00'}`}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase block">Certificate Deadline (24h)</span>
+                  <span className="font-semibold text-slate-800">
+                    {request.certificateDeadline || 'Calculated post-event (End + 24h)'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase block">Certificate Submitted</span>
+                  <span className="font-semibold text-slate-800">
+                    {request.certificateSubmittedAt || 'Not yet uploaded'}
+                  </span>
+                </div>
+              </div>
+
+              {request.documentUrl || request.certificateUrl ? (
                 <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
                   <div className="flex items-center gap-3">
                     <div className="p-2 bg-rose-50 text-rose-600 rounded-lg">
                       <FileText className="w-5 h-5" />
                     </div>
                     <div>
-                      <p className="text-xs font-bold text-slate-800">{request.documentUrl}</p>
-                      <span className="text-[10px] text-slate-400">PDF Document Proof Attached</span>
+                      <p className="text-xs font-bold text-slate-800">{request.certificateUrl || request.documentUrl}</p>
+                      <span className="text-[10px] text-slate-400">
+                        {request.certificateUrl ? 'Participation Certificate' : 'Supporting Letter / Document'}
+                      </span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => {
-                        const url = request.documentUrl || (request as any).odLetterUrl;
-                        if (url && url.startsWith('/api/')) {
+                        const url = request.certificateUrl || request.documentUrl || (request as any).odLetterUrl;
+                        if (url && (url.startsWith('/api/') || url.startsWith('http') || url.startsWith('blob:'))) {
                           window.open(url, '_blank');
                         } else {
                           const endpoint = faculty?.role === 'Class Incharge'
@@ -365,7 +389,7 @@ export const ODDetailModal: React.FC<ODDetailModalProps> = ({
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-xs font-bold text-indigo-700 hover:bg-indigo-100 shadow-xs transition-all"
                     >
                       <ExternalLink className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>Inspect Letter</span>
+                      <span>Inspect Document</span>
                     </button>
                     <button
                       type="button"

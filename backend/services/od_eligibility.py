@@ -53,7 +53,7 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
         rejection_reason       – set when eligible is False
         od_limit_percent       – 10.0
     """
-    clean_id = (str(student_id) or '').strip()
+    clean_id = (student_id or '').strip()
     if not clean_id:
         return _not_found_result(clean_id)
 
@@ -101,8 +101,10 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
                 (Student.user_id == clean_id) | (Student.register_number == clean_id)
             ).first()
             if st:
-                overall_pct = float(st.overall_attendance or 75.0)
-                total_classes = int(st.total_working_days or 120)
+                att_val = getattr(st, 'overall_attendance', None)
+                overall_pct = float(att_val) if att_val is not None else 75.0
+                days_val = getattr(st, 'total_working_days', None)
+                total_classes = int(days_val) if days_val is not None else 120
             session.close()
         except Exception:
             pass
@@ -117,7 +119,8 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
     od_used_days = 0.0
     approved_statuses = [
         'Pending', 'Mentor Approved', 'Class Incharge Approved',
-        'HOD Approved', 'Approved'
+        'HOD Approved', 'HOD Approved - Certificate Pending',
+        'Certificate Submitted', 'Approved'
     ]
 
     target_uid = (student_user.get('id') if student_user else None) or clean_id

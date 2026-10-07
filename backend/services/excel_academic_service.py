@@ -3,6 +3,7 @@ import io
 import re
 from datetime import datetime
 import openpyxl
+from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from backend.models.user import UserModel
 from backend.database.mongodb import users_collection
@@ -37,6 +38,9 @@ def generate_sample_academic_template():
     """
     wb = openpyxl.Workbook()
     ws = wb.active
+    if not isinstance(ws, Worksheet):
+        ws = wb.create_sheet("Academic Data")
+    assert isinstance(ws, Worksheet)
     ws.title = "Academic Data"
 
     headers = [
@@ -128,7 +132,7 @@ def parse_and_validate_academic_excel(file_stream, allowed_department=None):
         }
 
     ws = wb.active
-    if ws is None or ws.max_row < 1:
+    if ws is None or not isinstance(ws, Worksheet) or ws.max_row < 1:
         return {
             'success': False,
             'error': "The uploaded Excel spreadsheet is empty."
@@ -151,7 +155,7 @@ def parse_and_validate_academic_excel(file_stream, allowed_department=None):
             header_row_idx = r_idx
             break
 
-    if not header_col_map or 'register_number' not in header_col_map:
+    if not header_col_map or 'register_number' not in header_col_map or header_row_idx is None:
         return {
             'success': False,
             'error': "Missing required columns in spreadsheet. Expected headers must include 'Register Number' and 'Attendance Percentage' (or CAT marks)."
