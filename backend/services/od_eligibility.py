@@ -57,7 +57,23 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
     if not clean_id:
         return _not_found_result(clean_id)
 
+    # 0. Load central system settings
+    attendance_min_threshold = 75.0
+    cgpa_high_threshold = 8.5
     limit_pct = float(getattr(Config, 'OD_ATTENDANCE_LIMIT_PERCENT', 10.0))
+
+    try:
+        from backend.database.mongodb import system_settings_collection
+        settings_col = system_settings_collection()
+        if settings_col is not None:
+            cfg = settings_col.find_one({"id": "SYSTEM_CONFIG"})
+            if cfg:
+                attendance_min_threshold = float(cfg.get('attendance_threshold_percent', 75.0))
+                cgpa_high_threshold = float(cfg.get('cgpa_high_performer_threshold', 8.5))
+                limit_pct = float(cfg.get('max_od_limit_percent', 10.0))
+    except Exception:
+        pass
+
     total_classes = 120
 
     # 1. First, attempt lookup from MongoDB (primary storage)
@@ -67,6 +83,7 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
 
     student_user = None
     overall_pct = None
+    acad_doc = None
 
     if acad_col is not None:
         acad_doc = acad_col.find_one({
@@ -115,6 +132,21 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
 
     total_attended = int(total_classes * overall_pct / 100.0)
 
+    # Extract CGPA
+    cgpa = None
+    if acad_doc and acad_doc.get('cgpa') is not None:
+        try:
+            cgpa = float(acad_doc['cgpa'])
+        except (ValueError, TypeError):
+            pass
+    if cgpa is None and student_user and student_user.get('cgpa') is not None:
+        try:
+            cgpa = float(student_user['cgpa'])
+        except (ValueError, TypeError):
+            pass
+    if cgpa is None:
+        cgpa = 8.6  # Default healthy CGPA for demonstration if unspecified
+
     # 3. Calculate OD days already used (Pending, Mentor Approved, Class Incharge Approved, HOD Approved, Approved)
     od_used_days = 0.0
     approved_statuses = [
@@ -146,7 +178,13 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
 
     od_used_percent = (od_used_days / total_classes * 100.0) if total_classes > 0 else 0.0
 
-    # 4. 10% Academic OD Rule Calculation
+    # 4. Centralized Institutional Academic Rules:
+    # Rule A: Attendance Below 75% -> Ineligible for OD
+    # Rule B: CGPA Above 8.5 -> No 10% OD Limit
+    # Rule C: CGPA Below 8.5 -> Subject to 10% OD Limit
+    has_high_cgpa = (cgpa >= cgpa_high_threshold)
+    is_low_attendance = (overall_pct < attendance_min_threshold)
+
     max_od_allowed_percent = limit_pct * overall_pct / 100.0
     max_od_allowed_days = total_classes * max_od_allowed_percent / 100.0
 
@@ -156,11 +194,23 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
 
     eligible = True
     rejection_reason = None
+    status_label = "Eligible"
 
-    if requested_od_days > 0:
+    if is_low_attendance:
+        eligible = False
+        status_label = f"Attendance Below {int(attendance_min_threshold)}%"
+        rejection_reason = f"Overall attendance ({overall_pct:.1f}%) is below mandatory {attendance_min_threshold:.1f}% institutional threshold."
+    elif has_high_cgpa:
+        eligible = True
+        status_label = f"No Limit — CGPA Above {cgpa_high_threshold:.1f}"
+        max_od_allowed_days = 999.0
+        remaining_od_days = 999.0
+    else:
+        # Standard student subject to 10% limit
         projected_used = od_used_days + requested_od_days
-        if projected_used > max_od_allowed_days:
+        if requested_od_days > 0 and projected_used > max_od_allowed_days:
             eligible = False
+            status_label = "10% Limit Exceeded"
             rejection_reason = (
                 f"OD request exceeds the permitted {limit_pct:.0f}% attendance allowance. "
                 f"Maximum allowed: {max_od_allowed_days:.1f} days "
@@ -169,6 +219,12 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
                 f"Requested: {requested_od_days:.1f} days. "
                 f"Remaining allowance: {remaining_od_days:.1f} days."
             )
+        elif requested_od_days == 0 and od_used_days >= max_od_allowed_days:
+            eligible = False
+            status_label = "10% Limit Exceeded"
+        else:
+            eligible = True
+            status_label = "Eligible"
 
     return {
         'student_id': clean_id,
@@ -186,6 +242,11 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
         'eligible': eligible,
         'rejection_reason': rejection_reason,
         'od_limit_percent': limit_pct,
+        'cgpa': round(cgpa, 2),
+        'eligibility_status_label': status_label,
+        'status_label': status_label,
+        'attendance_threshold': attendance_min_threshold,
+        'cgpa_threshold': cgpa_high_threshold
     }
 
 
@@ -206,4 +267,7 @@ def _not_found_result(student_id):
         'eligible': False,
         'rejection_reason': 'Student academic record not found.',
         'od_limit_percent': 10.0,
+        'cgpa': 0.0,
+        'eligibility_status_label': 'Not Eligible',
+        'status_label': 'Not Eligible',
     }

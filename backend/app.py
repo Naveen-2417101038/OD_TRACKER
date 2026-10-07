@@ -16,6 +16,7 @@ try:
     from backend.routes.class_incharge import class_incharge_bp
     from backend.routes.hod import hod_bp
     from backend.routes.academic import academic_bp, get_student_academic_detail
+    from backend.routes.admin import admin_bp
 except ImportError as e:
     if "No module named 'backend'" in str(e):
         from config import Config
@@ -27,6 +28,7 @@ except ImportError as e:
         from routes.class_incharge import class_incharge_bp
         from routes.hod import hod_bp
         from routes.academic import academic_bp, get_student_academic_detail
+        from routes.admin import admin_bp
     else:
         raise
 
@@ -71,6 +73,7 @@ def create_app(config_class=Config):
     app.register_blueprint(hod_bp, url_prefix='/api/hod')
     app.register_blueprint(academic_bp, url_prefix='/api/academic')
     app.register_blueprint(academic_bp, name='class_incharge_academic', url_prefix='/api/class-incharge/academic')
+    app.register_blueprint(admin_bp, url_prefix='/api/admin')
 
     # Student academic direct route alias: GET /api/students/<student_id>/academic
     @app.route('/api/students/<student_id>/academic', methods=['GET'])

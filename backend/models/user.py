@@ -177,6 +177,8 @@ class UserModel:
         col.insert_one(doc)
         return UserModel.get_by_id(user_id)
 
+    create = create_user
+
     @staticmethod
     def create_password_reset_token(email):
         """
@@ -333,3 +335,21 @@ class UserModel:
         
         cursor = col.find({}, {"password_hash": 0, "password": 0}).sort("created_at", 1)
         return [UserModel._format_doc(u) for u in cursor]
+
+    @staticmethod
+    def update_user(user_id, updates):
+        """Update user fields safely."""
+        col = users_collection()
+        if col is None:
+            return None
+        clean_updates = dict(updates)
+        clean_updates.pop('password_hash', None)
+        clean_updates.pop('_id', None)
+        clean_updates.pop('id', None)
+        if 'password' in clean_updates:
+            pwd = clean_updates.pop('password')
+            if pwd:
+                clean_updates['password_hash'] = generate_password_hash(pwd)
+        clean_updates['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        col.update_one({"id": str(user_id)}, {"$set": clean_updates})
+        return UserModel.get_by_id(user_id)

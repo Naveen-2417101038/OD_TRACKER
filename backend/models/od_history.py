@@ -43,3 +43,11 @@ class ODHistoryModel:
             return []
         rows = col.find({"request_id": str(request_id)}).sort("created_at", 1)
         return [ODHistoryModel._format_doc(r) for r in rows]
+
+    @staticmethod
+    def list_all(limit=100):
+        col = od_history_collection()
+        if col is None:
+            return []
+        rows = col.find().sort("created_at", -1).limit(limit)
+        return [ODHistoryModel._format_doc(r) for r in rows]

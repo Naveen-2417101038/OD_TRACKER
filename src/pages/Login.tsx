@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { 
   Landmark, GraduationCap, UserCheck, Users, 
   Building2, Lock, User, Eye, EyeOff, 
-  AlertCircle, ArrowRight,
+  AlertCircle, ArrowRight, ShieldCheck,
   CheckCircle2, HelpCircle, Sparkles
 } from 'lucide-react';
 import { useToast } from '../components/Toast';
@@ -134,6 +134,19 @@ const ROLE_THEMES: Record<UserRole, {
     submitBtn: 'bg-purple-900 hover:bg-purple-700 shadow-purple-900/20',
     focusRing: 'focus:border-purple-500 focus:ring-purple-500/15',
     roleBadge: 'bg-purple-700 text-white',
+  },
+  Admin: {
+    pageBg: 'bg-gradient-to-br from-amber-50/70 via-slate-50 to-orange-50/50',
+    leftGradient: 'from-slate-950 via-zinc-900 to-amber-950',
+    orb1: 'bg-amber-500/20',
+    orb2: 'bg-orange-600/15',
+    titleGradient: 'from-amber-300 via-orange-200 to-yellow-300',
+    tagBg: 'bg-amber-500/20 border-amber-400/30',
+    tagText: 'text-amber-200',
+    activeBtn: 'bg-amber-600 text-white shadow-md shadow-amber-600/30 scale-[1.02]',
+    submitBtn: 'bg-slate-900 hover:bg-amber-700 shadow-slate-900/20',
+    focusRing: 'focus:border-amber-500 focus:ring-amber-500/15',
+    roleBadge: 'bg-amber-600 text-white',
   }
 };
 
@@ -367,8 +380,8 @@ export const Login: React.FC = () => {
                   </span>
                 </div>
 
-                {/* 4 Role Option Buttons */}
-                <div className="grid grid-cols-4 gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200/80">
+                {/* 5 Role Option Buttons */}
+                <div className="grid grid-cols-5 gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200/80">
                   {ROLE_OPTIONS.map((r) => {
                     const Icon = r.icon;
                     const isActive = selectedRole === r.role;
@@ -514,9 +527,18 @@ export const Login: React.FC = () => {
               </form>
 
               {/* Security Note */}
-              <div className="pt-2 border-t border-slate-100 flex items-center justify-center gap-1.5 text-[11px] text-slate-400 font-medium text-center">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                <span>Secured with Role-Based Access Control & Session Token Authorization</span>
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-1.5 text-[11px] text-slate-400 font-medium">
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span>Academic Workflow Portal</span>
+                </div>
+                <Link
+                  to="/admin/login"
+                  className="inline-flex items-center gap-1.5 font-bold text-amber-700 hover:text-amber-800 transition-colors bg-amber-50 hover:bg-amber-100/80 px-2.5 py-1 rounded-lg border border-amber-200/60"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Admin Console →</span>
+                </Link>
               </div>
 
             </div>

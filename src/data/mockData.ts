@@ -860,12 +860,17 @@ export const getRoleDashboardPath = (role: UserRole): string => {
       return '/class-incharge/dashboard';
     case 'HOD':
       return '/hod/dashboard';
+    case 'Admin':
+      return '/admin/dashboard';
     default:
       return '/login';
   }
 };
 
-export const getRoleLoginPath = (_role?: UserRole): string => {
+export const getRoleLoginPath = (role?: UserRole): string => {
+  if (role === 'Admin') {
+    return '/admin/login';
+  }
   return '/login';
 };
 

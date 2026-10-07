@@ -192,6 +192,10 @@ def academic_upload_history_collection():
     db = get_db()
     return db['academic_upload_history'] if db is not None else None
 
+def system_settings_collection():
+    db = get_db()
+    return db['system_settings'] if db is not None else None
+
 def init_db():
     """
     Initialize MongoDB Atlas database:
@@ -359,6 +363,23 @@ def init_db():
                 'avatar': 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&h=150&q=80',
                 'created_at': '2026-01-01 09:00:00',
                 'updated_at': '2026-01-01 09:00:00'
+            },
+            {
+                'id': 'ADM001',
+                'identifier': 'ADMIN-001',
+                'name': 'System Administrator',
+                'email': 'admin@rajalakshmi.edu.in',
+                'role': 'Admin',
+                'sub_role': 'Admin',
+                'department': 'Administration',
+                'year': 'All Years',
+                'section': 'All Sections',
+                'designation': 'System Administrator',
+                'phone': '+91 98400 00001',
+                'password_hash': default_pwd_hash,
+                'avatar': 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=150&h=150&q=80',
+                'created_at': '2026-01-01 09:00:00',
+                'updated_at': '2026-01-01 09:00:00'
             }
         ]
 
@@ -371,6 +392,24 @@ def init_db():
                 curr_hash = existing.get('password_hash')
                 if not curr_hash or not (curr_hash.startswith('scrypt:') or curr_hash.startswith('pbkdf2:')):
                     users.update_one({"_id": existing['_id']}, {"$set": {"password_hash": default_pwd_hash}})
+
+        # Seed default system settings
+        settings_col = db['system_settings']
+        existing_settings = settings_col.find_one({"id": "SYSTEM_CONFIG"})
+        if not existing_settings:
+            settings_col.insert_one({
+                "id": "SYSTEM_CONFIG",
+                "attendance_threshold_percent": 75.0,
+                "cgpa_high_performer_threshold": 8.5,
+                "max_od_limit_percent": 10.0,
+                "academic_year": "2025-2026",
+                "semester_name": "Even Semester",
+                "total_working_days": 120,
+                "allow_student_self_registration": True,
+                "email_notifications_enabled": True,
+                "updated_at": "2026-01-01 09:00:00",
+                "updated_by": "System Administrator"
+            })
 
         # Seed initial academic records if not present
         seed_academics = [
