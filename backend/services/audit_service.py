@@ -4,7 +4,7 @@ Centralized Audit Logging Service.
 Every important system action is recorded in the audit_logs table.
 NEVER log: passwords, password hashes, tokens, secret keys.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import request as flask_request
 
 try:
@@ -59,13 +59,13 @@ class AuditAction:
 
 def log_action(
     action: str,
-    user_id: str = None,
-    user_email: str = None,
-    user_role: str = None,
-    entity_type: str = None,
-    entity_id: str = None,
-    description: str = None,
-    ip_address: str = None,
+    user_id: str | None = None,
+    user_email: str | None = None,
+    user_role: str | None = None,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+    description: str | None = None,
+    ip_address: str | None = None,
 ):
     """
     Record an audit log entry in PostgreSQL.
@@ -92,10 +92,10 @@ def log_action(
             user_role=user_role,
             action=action,
             entity_type=entity_type,
-            entity_id=str(entity_id) if entity_id else None,
+            entity_id=entity_id,
             description=description,
             ip_address=ip_address,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         session.add(log_entry)
         session.commit()
@@ -110,9 +110,9 @@ def log_from_user(user: dict, action: str, **kwargs):
     """Convenience wrapper extracting user fields from dict."""
     log_action(
         action=action,
-        user_id=user.get('id'),
-        user_email=user.get('email'),
-        user_role=user.get('role'),
+        user_id=str(user.get('id')) if user.get('id') else None,
+        user_email=str(user.get('email')) if user.get('email') else None,
+        user_role=str(user.get('role')) if user.get('role') else None,
         **kwargs,
     )
 
@@ -120,14 +120,14 @@ def log_from_user(user: dict, action: str, **kwargs):
 def get_audit_logs(
     page: int = 1,
     per_page: int = 50,
-    user_email: str = None,
-    user_role: str = None,
-    action: str = None,
-    entity_type: str = None,
-    entity_id: str = None,
-    date_from: str = None,
-    date_to: str = None,
-    search: str = None,
+    user_email: str | None = None,
+    user_role: str | None = None,
+    action: str | None = None,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    search: str | None = None,
 ) -> dict:
     """
     Query audit logs with filtering and pagination.
@@ -146,7 +146,7 @@ def get_audit_logs(
         if entity_type:
             query = query.filter(AuditLog.entity_type == entity_type)
         if entity_id:
-            query = query.filter(AuditLog.entity_id == str(entity_id))
+            query = query.filter(AuditLog.entity_id == entity_id)
         if date_from:
             try:
                 df = datetime.strptime(date_from, '%Y-%m-%d')
@@ -196,5 +196,5 @@ def _log_to_dict(log: AuditLog) -> dict:
         'entity_id': log.entity_id,
         'description': log.description,
         'ip_address': log.ip_address,
-        'created_at': log.created_at.isoformat() if log.created_at else None,
+        'created_at': log.created_at.isoformat() if log.created_at is not None else None,
     }

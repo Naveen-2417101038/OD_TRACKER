@@ -91,7 +91,7 @@ export interface ODRequestStages {
   hod: ApprovalStageDetail;
 }
 
-export type CertificateVerificationStatus = 'Not Uploaded' | 'Pending Verification' | 'Verified' | 'Rejected';
+export type CertificateVerificationStatus = 'Not Uploaded' | 'Pending Upload' | 'Pending Verification' | 'Verified' | 'Rejected' | 'Deadline Expired';
 
 export type ODStatus = 
   | 'Pending' 
@@ -100,8 +100,12 @@ export type ODStatus =
   | 'Class Incharge Approved' 
   | 'Class Incharge Rejected' 
   | 'HOD Approved' 
+  | 'HOD Approved - Certificate Pending'
+  | 'Certificate Submitted'
+  | 'Certificate Deadline Expired'
   | 'HOD Rejected' 
   | 'Approved' 
+  | 'Completed'
   | 'Rejected';
 
 export interface ODRequest {
@@ -129,12 +133,18 @@ export interface ODRequest {
   documentUrl: string | null;
   odLetterUrl?: string | null;
   certificateStatus?: CertificateVerificationStatus;
+  certificateUrl?: string | null;
+  eventStartDatetime?: string;
+  eventEndDatetime?: string;
+  hodApprovedAt?: string;
+  certificateDeadline?: string;
+  certificateSubmittedAt?: string;
   verifiedByFacultyId?: string;
   verifiedByFacultyName?: string;
   verifiedAt?: string;
   status: ODStatus;
-  approvalStage: 'OD Submitted' | 'Mentor' | 'Class Incharge' | 'HOD' | 'Approved' | 'Rejected' | string;
-  currentStage?: 'Mentor' | 'Class Incharge' | 'HOD' | 'Approved' | 'Rejected' | string;
+  approvalStage: 'OD Submitted' | 'Mentor' | 'Class Incharge' | 'HOD' | 'Approved' | 'Rejected' | 'Certificate Pending' | string;
+  currentStage?: 'Mentor' | 'Class Incharge' | 'HOD' | 'Approved' | 'Rejected' | 'Certificate Pending' | string;
   stages: ODRequestStages;
   rejectionReason?: string;
   remarks?: string;

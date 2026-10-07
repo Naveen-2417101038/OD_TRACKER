@@ -7,7 +7,13 @@ import {
   CheckCircle2, HelpCircle, Sparkles
 } from 'lucide-react';
 import { useToast } from '../components/Toast';
-import { authenticateUserAsync, getAuthSession, getRoleDashboardPath } from '../data/mockData';
+import { 
+  authenticateUserAsync, 
+  getAuthSession, 
+  getRoleDashboardPath,
+  forgotPasswordAsync,
+  registerUserAsync 
+} from '../data/mockData';
 import { UserRole } from '../types/types';
 
 interface RoleOption {
@@ -220,7 +226,6 @@ export const Login: React.FC = () => {
       return;
     }
     setIsForgotLoading(true);
-    const { forgotPasswordAsync } = await import('../data/mockData');
     const result = await forgotPasswordAsync(forgotEmail);
     setIsForgotLoading(false);
     showToast(result.message || 'If an account exists for this email, a password reset link has been sent.', 'info');
@@ -253,7 +258,6 @@ export const Login: React.FC = () => {
     }
 
     setRegIsLoading(true);
-    const { registerUserAsync } = await import('../data/mockData');
     const result = await registerUserAsync({
       email: regEmail,
       password: regPassword,

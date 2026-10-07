@@ -1,0 +1,9 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "extraPaths": [
+    ".",
+    "backend",
+    "C:/Users/Naveen/AppData/Local/Programs/Python/Python314/Lib/site-packages"
+  ]
+}

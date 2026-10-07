@@ -1,0 +1,9 @@
+python-interpreter-path = "c:/Users/Naveen/Documents/OD_TRACKER/.venv/Scripts/python.exe"
+
+search-path = [
+    ".",
+    "..",
+    "c:/Users/Naveen/Documents/OD_TRACKER/.venv/Lib/site-packages",
+    "../.venv/Lib/site-packages",
+    "C:/Users/Naveen/AppData/Local/Programs/Python/Python314/Lib/site-packages"
+]

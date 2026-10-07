@@ -45,6 +45,15 @@ export const ApplyOD: React.FC = () => {
     'Cultural Event', 'Internship', 'Competition', 'Seminar', 'Other'
   ];
 
+  const getMinAllowedDate = () => {
+    const today = new Date();
+    today.setDate(today.getDate() + 3);
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
   const validate = () => {
     const newErrors: Record<string, string> = {};
     if (!formData.eventName.trim()) newErrors.eventName = 'Event / Program Name is required';
@@ -56,6 +65,24 @@ export const ApplyOD: React.FC = () => {
     if (!formData.fromTime) newErrors.fromTime = 'From Time is required';
     if (!formData.toTime) newErrors.toTime = 'To Time is required';
     if (!formData.reason.trim()) newErrors.reason = 'Reason for OD is required';
+
+    // Requirement 1: 3-day advance submission rule
+    if (formData.fromDate) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const [y, m, d] = formData.fromDate.split('-').map(Number);
+      const eventDate = new Date(y, m - 1, d);
+      eventDate.setHours(0, 0, 0, 0);
+
+      const diffTime = eventDate.getTime() - today.getTime();
+      const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+      if (eventDate < today) {
+        newErrors.fromDate = 'Cannot apply for OD for past dates. OD requests must be submitted at least 3 days before the event date.';
+      } else if (diffDays < 3) {
+        newErrors.fromDate = 'OD requests must be submitted at least 3 days before the event date.';
+      }
+    }
 
     // Validate date range
     if (formData.fromDate && formData.toDate) {
@@ -230,6 +257,19 @@ export const ApplyOD: React.FC = () => {
             </div>
           )}
 
+          {/* Requirement 3: Mandatory Certificate Submission Policy Disclaimer */}
+          <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h4 className="text-xs font-bold text-amber-900 uppercase tracking-wider">
+                Mandatory Certificate Submission Policy
+              </h4>
+              <p className="text-xs text-amber-800 font-medium leading-relaxed">
+                <strong>Important:</strong> After the OD/event ends, the required certificate must be uploaded within 24 hours. Failure to upload the certificate within the deadline will result in automatic rejection of the OD.
+              </p>
+            </div>
+          </div>
+
           {/* Section 1: Event Details */}
           <div className="space-y-4">
             <h3 className="font-bold text-xs uppercase tracking-wider text-slate-400 border-b border-slate-100 pb-2">
@@ -333,9 +373,14 @@ export const ApplyOD: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Event Start Date */}
               <div className="space-y-1">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Event Start Date <span className="text-rose-500">*</span>
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Event Start Date <span className="text-rose-500">*</span>
+                  </label>
+                  <span className="text-[10px] font-bold text-primary-600 bg-primary-50 px-2 py-0.5 rounded">
+                    Min 3 Days in Advance
+                  </span>
+                </div>
                 <div className="relative">
                   <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                     <Calendar className="w-4 h-4" />
@@ -343,6 +388,7 @@ export const ApplyOD: React.FC = () => {
                   <input
                     type="date"
                     required
+                    min={getMinAllowedDate()}
                     value={formData.fromDate}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -358,6 +404,7 @@ export const ApplyOD: React.FC = () => {
                   />
                 </div>
                 {errors.fromDate && <p className="text-rose-500 text-[10px] font-bold mt-1">{errors.fromDate}</p>}
+                <p className="text-[10px] text-slate-400 font-medium">OD requests must be submitted at least 3 days before the event date.</p>
               </div>
 
               {/* Event End Date */}
@@ -372,7 +419,7 @@ export const ApplyOD: React.FC = () => {
                   <input
                     type="date"
                     required
-                    min={formData.fromDate || undefined}
+                    min={formData.fromDate || getMinAllowedDate()}
                     value={formData.toDate}
                     onChange={(e) => setFormData({ ...formData, toDate: e.target.value })}
                     className={`w-full bg-slate-50 border rounded-xl py-2.5 pl-10 pr-3.5 text-xs md:text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all ${

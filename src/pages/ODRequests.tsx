@@ -87,11 +87,31 @@ export const ODRequests: React.FC = () => {
       req.eventName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       req.eventOrganizer.toLowerCase().includes(searchQuery.toLowerCase());
     
-    const matchesStatus = 
-      statusFilter === 'All' || 
-      req.status === statusFilter ||
-      (statusFilter === 'Approved' && (req.status === 'Mentor Approved' || req.status === 'Class Incharge Approved')) ||
-      (statusFilter === 'Rejected' && (req.status === 'Mentor Rejected' || req.status === 'Class Incharge Rejected'));
+    let matchesStatus = false;
+    if (statusFilter === 'All') {
+      matchesStatus = true;
+    } else if (statusFilter === 'Pending') {
+      matchesStatus = 
+        req.status === 'Pending' || 
+        req.status === 'Mentor Approved' || 
+        req.status === 'Class Incharge Approved' || 
+        req.status === 'HOD Approved - Certificate Pending' || 
+        req.status === 'Certificate Submitted';
+    } else if (statusFilter === 'Approved') {
+      matchesStatus = 
+        req.status === 'Approved' || 
+        req.status === 'HOD Approved' || 
+        req.status === 'HOD Approved - Certificate Pending' || 
+        req.status === 'Certificate Submitted' ||
+        req.status === 'Class Incharge Approved' ||
+        req.status === 'Mentor Approved';
+    } else if (statusFilter === 'Rejected') {
+      matchesStatus = 
+        req.status === 'Rejected' || 
+        req.status === 'Mentor Rejected' || 
+        req.status === 'Class Incharge Rejected' || 
+        req.status === 'HOD Rejected';
+    }
 
     return matchesSearch && matchesStatus;
   });
@@ -321,9 +341,9 @@ export const ODRequests: React.FC = () => {
                       <p className="text-xs text-rose-700 font-medium mt-1 leading-normal">
                         {selectedRequest.rejectionReason || 
                          selectedRequest.remarks ||
-                         selectedRequest.stages.mentor?.feedback || 
-                         selectedRequest.stages.classIncharge?.feedback || 
-                         selectedRequest.stages.hod?.feedback || 
+                         selectedRequest.stages?.mentor?.feedback || 
+                         selectedRequest.stages?.classIncharge?.feedback || 
+                         selectedRequest.stages?.hod?.feedback || 
                          'Your request has been declined. Please consult your Faculty Mentor.'}
                       </p>
                     </div>
@@ -337,7 +357,7 @@ export const ODRequests: React.FC = () => {
                     <div>
                       <h5 className="font-bold text-xs text-indigo-900 uppercase tracking-wider">Status: Mentor Recommended & Forwarded</h5>
                       <p className="text-xs text-indigo-800 font-medium mt-1 leading-normal">
-                        {selectedRequest.stages.mentor?.feedback || selectedRequest.remarks || 'Your request has been recommended by Mentor and forwarded to Class Incharge for endorsement.'}
+                        {selectedRequest.stages?.mentor?.feedback || selectedRequest.remarks || 'Your request has been recommended by Mentor and forwarded to Class Incharge for endorsement.'}
                       </p>
                     </div>
                   </div>
@@ -350,8 +370,59 @@ export const ODRequests: React.FC = () => {
                     <div>
                       <h5 className="font-bold text-xs text-teal-900 uppercase tracking-wider">Status: Class Incharge Endorsed & Forwarded</h5>
                       <p className="text-xs text-teal-800 font-medium mt-1 leading-normal">
-                        {selectedRequest.stages.classIncharge?.feedback || selectedRequest.remarks || 'Your request has been endorsed by Class Incharge and forwarded to HOD for final sanction.'}
+                        {selectedRequest.stages?.classIncharge?.feedback || selectedRequest.remarks || 'Your request has been endorsed by Class Incharge and forwarded to HOD for final sanction.'}
                       </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* HOD Approved - Certificate Pending Comment */}
+                {(selectedRequest.status === 'HOD Approved - Certificate Pending' || selectedRequest.status === 'HOD Approved') && (
+                  <div className="mt-6 p-4 border border-amber-300 bg-amber-50 rounded-2xl flex items-start gap-3">
+                    <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5 animate-pulse" />
+                    <div className="space-y-1.5 w-full">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <h5 className="font-bold text-xs text-amber-900 uppercase tracking-wider">
+                          Status: HOD Approved — Mandatory Certificate Pending
+                        </h5>
+                        <button
+                          onClick={() => navigate('/student/certificates')}
+                          className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-lg shadow-xs transition-all"
+                        >
+                          Go to Certificate Upload →
+                        </button>
+                      </div>
+                      <p className="text-xs text-amber-800 font-medium leading-normal">
+                        Executive sanction has been granted by HOD. The student must attend the event and upload the completion certificate within 24 hours after the event ends.
+                      </p>
+                      <div className="flex flex-wrap gap-4 pt-1 text-[11px] font-semibold text-amber-900">
+                        {selectedRequest.eventEndDatetime && (
+                          <span>Event Ends: <strong>{selectedRequest.eventEndDatetime}</strong></span>
+                        )}
+                        {selectedRequest.certificateDeadline && (
+                          <span>Certificate Deadline: <strong>{selectedRequest.certificateDeadline}</strong></span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Certificate Submitted Alert Comment */}
+                {selectedRequest.status === 'Certificate Submitted' && (
+                  <div className="mt-6 p-4 border border-blue-200 bg-blue-50/80 rounded-2xl flex items-start gap-3">
+                    <CheckCircle2 className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <h5 className="font-bold text-xs text-blue-900 uppercase tracking-wider">
+                        Status: Certificate Submitted — Verification Pending
+                      </h5>
+                      <p className="text-xs text-blue-800 font-medium leading-normal">
+                        Your participation certificate has been uploaded on time within the 24-hour deadline. It is currently awaiting verification by your Faculty Mentor.
+                      </p>
+                      {selectedRequest.certificateSubmittedAt && (
+                        <p className="text-[10px] text-blue-600 font-bold">
+                          Submitted at: {selectedRequest.certificateSubmittedAt}
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}
@@ -361,9 +432,9 @@ export const ODRequests: React.FC = () => {
                   <div className="mt-6 p-4 border border-emerald-200 bg-emerald-50 rounded-2xl flex items-start gap-3">
                     <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
                     <div>
-                      <h5 className="font-bold text-xs text-emerald-800 uppercase tracking-wider">Status: Fully Approved & Sanctioned</h5>
+                      <h5 className="font-bold text-xs text-emerald-800 uppercase tracking-wider">Status: Fully Approved & Completed</h5>
                       <p className="text-xs text-emerald-700 font-medium mt-1 leading-normal">
-                        Your OD has been fully approved through Mentor ➔ Class Incharge ➔ HOD. Academic attendance has been credited.
+                        Your OD has been fully approved and participation certificate verified. Academic compensatory attendance has been credited to your official record.
                       </p>
                     </div>
                   </div>

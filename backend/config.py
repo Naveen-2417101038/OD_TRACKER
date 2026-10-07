@@ -21,6 +21,9 @@ def _csv_to_list(raw: str) -> list:
 
 
 class Config:
+    BASE_DIR = BASE_DIR
+    ROOT_DIR = ROOT_DIR
+
     # ── Secret Key ────────────────────────────────────────────────────────────
     # NEVER use the fallback in production. Set SECRET_KEY in your environment.
     SECRET_KEY = os.environ.get('SECRET_KEY', 'CHANGE_ME_IN_PRODUCTION_USE_SECRET_KEY_ENV')
@@ -28,6 +31,9 @@ class Config:
     # ── MongoDB Atlas Configuration ───────────────────────────────────────────
     MONGO_URI = os.environ.get('MONGO_URI', '<PASTE_MY_MONGODB_ATLAS_CONNECTION_STRING_HERE>')
     MONGO_DB_NAME = os.environ.get('MONGO_DB_NAME', 'od_tracking')
+
+    # ── SQL / PostgreSQL Database Fallback ────────────────────────────────────
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', f"sqlite:///{os.path.join(BASE_DIR, 'od_tracking.db')}")
 
     # ── Upload Directories ────────────────────────────────────────────────────
     UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')

@@ -30,6 +30,8 @@ class PostgreSQLDB:
     def get_session(cls):
         if cls._session_factory is None:
             cls.connect()
+        if cls._session_factory is None:
+            raise RuntimeError("Database session factory could not be initialized")
         return cls._session_factory()
 
     @classmethod
@@ -101,13 +103,15 @@ def get_db_session():
 def get_db_connection():
     """Return DBAPI connection for compatibility."""
     engine = PostgreSQLDB.get_engine()
+    if engine is None:
+        raise RuntimeError("Database engine not initialized")
     raw_conn = engine.raw_connection()
-    if hasattr(raw_conn, 'connection') and hasattr(raw_conn.connection, 'row_factory'):
+    if hasattr(raw_conn, 'connection') and hasattr(getattr(raw_conn, 'connection'), 'row_factory'):
         import sqlite3
-        raw_conn.connection.row_factory = sqlite3.Row
+        setattr(getattr(raw_conn, 'connection'), 'row_factory', sqlite3.Row)
     elif hasattr(raw_conn, 'row_factory'):
         import sqlite3
-        raw_conn.row_factory = sqlite3.Row
+        setattr(raw_conn, 'row_factory', sqlite3.Row)
     return raw_conn
 
 
@@ -162,10 +166,10 @@ def _seed_default_users(engine):
     from sqlalchemy.orm import Session
     from backend.models.db_models import User, Student, Attendance, CATMarks, Subject
     from werkzeug.security import generate_password_hash
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     default_hash = generate_password_hash('password123')
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     seed_users = [
         {
@@ -299,9 +303,9 @@ def _seed_academic_data(engine):
     """Seed attendance and CAT marks for the demo student."""
     from sqlalchemy.orm import Session
     from backend.models.db_models import Subject, Attendance, CATMarks
-    from datetime import datetime
+    from datetime import datetime, timezone
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     subjects_data = [
         ('CS3401', 'Design and Analysis of Algorithms', 'Dr. M. Senthil', 5),
         ('CS3402', 'Operating Systems & System Software', 'Dr. M. Senthil', 5),
