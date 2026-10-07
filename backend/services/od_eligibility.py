@@ -91,25 +91,10 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
         if student_user and student_user.get('attendance_percentage') is not None:
             overall_pct = float(student_user['attendance_percentage'])
 
-    # 2. Fallback to PostgreSQL/SQLite if MongoDB had no record
-    if overall_pct is None:
-        try:
-            from backend.database.postgresql import get_db_session
-            from backend.models.db_models import Student, Attendance
-            session = get_db_session()
-            st = session.query(Student).filter(
-                (Student.user_id == clean_id) | (Student.register_number == clean_id)
-            ).first()
-            if st:
-                overall_pct = float(st.overall_attendance or 75.0)
-                total_classes = int(st.total_working_days or 120)
-            session.close()
-        except Exception:
-            pass
-
-    # Default fallback if student exists or standard default
+    # 2. Default fallback if student exists or standard institutional default
     if overall_pct is None:
         overall_pct = 85.0
+
 
     total_attended = int(total_classes * overall_pct / 100.0)
 

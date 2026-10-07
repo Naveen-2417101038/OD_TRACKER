@@ -3,8 +3,12 @@ import sys
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-# Ensure project root is present in sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Ensure project root and backend directory are present in sys.path
+_base_dir = os.path.abspath(os.path.dirname(__file__))
+_root_dir = os.path.abspath(os.path.join(_base_dir, '..'))
+for _d in [_root_dir, _base_dir]:
+    if _d not in sys.path:
+        sys.path.insert(0, _d)
 
 try:
     from backend.config import Config

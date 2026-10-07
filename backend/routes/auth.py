@@ -1,12 +1,16 @@
 import hmac
 import hashlib
 import time
+import uuid
 from functools import wraps
 from flask import Blueprint, request, jsonify, session, current_app
-from backend.models.user import UserModel
+from werkzeug.security import generate_password_hash
+from backend.models.user import UserModel, validate_college_email
 from backend.database.mongodb import users_collection
+from backend.services.email_service import send_verification_email, send_password_reset_email
 
 auth_bp = Blueprint('auth', __name__)
+
 
 ROLE_DASHBOARDS = {
     'Student': '/student/dashboard',
@@ -143,6 +147,20 @@ def login():
             'error': 'Invalid password. Please verify your credentials and try again.'
         }), 401
 
+    # Check account status (Disabled / Unverified)
+    account_status = str(user.get('account_status') or 'ACTIVE').upper()
+    if account_status == 'DISABLED':
+        return jsonify({
+            'success': False,
+            'error': 'Your account has been disabled. Please contact the administrator.'
+        }), 401
+
+    if user.get('email_verified') is False and account_status == 'UNVERIFIED':
+        return jsonify({
+            'success': False,
+            'error': 'Please verify your email address before logging in.'
+        }), 401
+
     # If login initiated from a specific role portal, check role compatibility
     user_role = user['role']
     if requested_role and requested_role.lower() != user_role.lower() and requested_role.lower() != (user.get('sub_role') or '').lower():
@@ -158,6 +176,7 @@ def login():
     session['user_id'] = user['id']
     session['role'] = user_role
     session['name'] = user['name']
+
 
     safe_user = UserModel.to_safe_dict(user)
     safe_user['userId'] = user['id']
@@ -234,3 +253,199 @@ def list_demo_users():
         item['dashboardUrl'] = ROLE_DASHBOARDS.get(item['role'], '/student/dashboard')
 
     return jsonify({'users': users}), 200
+
+@auth_bp.route('/register', methods=['POST'])
+def register():
+    """
+    Register a new student / faculty account.
+    Restricted to official college emails (@rajalakshmi.edu.in).
+    """
+    data = request.get_json() or {}
+    email = (data.get('email') or '').strip()
+    password = (data.get('password') or '').strip()
+    confirm_password = (data.get('confirmPassword') or data.get('confirm_password') or '').strip()
+    full_name = (data.get('fullName') or data.get('name') or '').strip()
+    role = (data.get('role') or 'Student').strip()
+    identifier = (data.get('identifier') or data.get('registerNumber') or data.get('registerNo') or '').strip()
+
+    if not email:
+        return jsonify({'success': False, 'error': 'College email is required.'}), 400
+
+    # Prevent self-assigning privileged executive roles during public registration
+    if role.lower() in ['admin', 'hod']:
+        return jsonify({
+            'success': False,
+            'error': 'Cannot self-register with privileged role. Admin and HOD accounts must be created by an administrator.'
+        }), 400
+
+    # Validate official domain restriction
+    is_valid_domain, norm_email = validate_college_email(email)
+    if not is_valid_domain:
+        return jsonify({
+            'success': False,
+            'error': 'Only official college email addresses ending with @rajalakshmi.edu.in are allowed.'
+        }), 400
+
+    if not password:
+        return jsonify({'success': False, 'error': 'Password is required.'}), 400
+
+    if len(password) < 6:
+        return jsonify({'success': False, 'error': 'Password must be at least 6 characters long.'}), 400
+
+    if confirm_password and password != confirm_password:
+        return jsonify({'success': False, 'error': 'Passwords do not match.'}), 400
+
+    # Check for existing account
+    if UserModel.get_by_email(norm_email):
+        return jsonify({'success': False, 'error': 'An account with this college email already exists.'}), 400
+
+    if identifier and UserModel.get_by_identifier(identifier):
+        return jsonify({'success': False, 'error': f"An account with Register No / ID '{identifier}' already exists."}), 400
+
+    if not identifier:
+        identifier = norm_email.split('@')[0].upper()
+
+    if not full_name:
+        full_name = norm_email.split('@')[0].replace('.', ' ').title()
+
+    verification_token = f"ver_{uuid.uuid4().hex}"
+
+    user_data = {
+        'identifier': identifier,
+        'name': full_name,
+        'email': norm_email,
+        'role': role,
+        'sub_role': role,
+        'password': password,
+        'email_verified': False,
+        'verification_token': verification_token,
+        'department': data.get('department', 'Computer Science and Design'),
+        'year': data.get('year', 'III Year'),
+        'section': data.get('section', 'A'),
+    }
+
+    new_user = UserModel.create_user(user_data)
+    # Send verification email (logs to console in dev mode)
+    send_verification_email(norm_email, full_name, verification_token)
+
+    return jsonify({
+        'success': True,
+        'unverified': True,
+        'message': 'Account registered successfully. A verification link has been sent to your college email.',
+        'user': UserModel.to_safe_dict(new_user),
+        'verificationToken': verification_token
+    }), 201
+
+@auth_bp.route('/verify-email/<token>', methods=['GET'])
+def verify_email(token):
+    """Verify user college email address using verification token."""
+    clean_token = (token or '').strip()
+    if not clean_token:
+        return jsonify({'success': False, 'error': 'Invalid verification token.'}), 400
+
+    user = UserModel.get_by_verification_token(clean_token)
+    if not user:
+        return jsonify({'success': False, 'error': 'Invalid or expired verification token.'}), 404
+
+    UserModel.update_user(user['id'], {
+        'email_verified': True,
+        'verification_token': None
+    })
+
+    return jsonify({
+        'success': True,
+        'message': 'Your college email address has been verified successfully! You can now log in.'
+    }), 200
+
+@auth_bp.route('/request-password-reset', methods=['POST'])
+@auth_bp.route('/forgot-password', methods=['POST'])
+def request_password_reset():
+    """Initiate password reset flow by dispatching reset email."""
+    data = request.get_json() or {}
+    identifier = (data.get('email') or data.get('identifier') or '').strip()
+
+    if not identifier:
+        return jsonify({'success': False, 'error': 'Email or Register No is required.'}), 400
+
+    user = UserModel.get_by_email(identifier) or UserModel.get_by_identifier(identifier)
+    if not user:
+        # Generic response to prevent user enumeration
+        return jsonify({
+            'success': True,
+            'message': 'If an account exists with this email address, a password reset link has been sent.'
+        }), 200
+
+    reset_token = f"rst_{uuid.uuid4().hex}"
+    UserModel.update_user(user['id'], {'reset_token': reset_token})
+    send_password_reset_email(user.get('email', ''), user.get('name', 'User'), reset_token)
+
+    return jsonify({
+        'success': True,
+        'message': 'If an account exists with this email address, a password reset link has been sent.',
+        'resetToken': reset_token
+    }), 200
+
+@auth_bp.route('/reset-password', methods=['POST'])
+def reset_password():
+    """Reset password using valid reset token."""
+    data = request.get_json() or {}
+    token = (data.get('token') or '').strip()
+    new_password = (data.get('newPassword') or data.get('new_password') or data.get('password') or '').strip()
+    confirm_password = (data.get('confirmPassword') or data.get('confirm_password') or '').strip()
+
+    if not token:
+        return jsonify({'success': False, 'error': 'Reset token is required.'}), 400
+
+    if not new_password:
+        return jsonify({'success': False, 'error': 'New password is required.'}), 400
+
+    if len(new_password) < 6:
+        return jsonify({'success': False, 'error': 'Password must be at least 6 characters long.'}), 400
+
+    if confirm_password and new_password != confirm_password:
+        return jsonify({'success': False, 'error': 'Passwords do not match.'}), 400
+
+    user = UserModel.get_by_reset_token(token)
+    if not user:
+        return jsonify({'success': False, 'error': 'Invalid or expired password reset token.'}), 400
+
+    pwd_hash = generate_password_hash(new_password)
+    UserModel.update_user(user['id'], {
+        'password_hash': pwd_hash,
+        'reset_token': None
+    })
+
+    return jsonify({
+        'success': True,
+        'message': 'Password reset successfully! You can now log in with your new credentials.'
+    }), 200
+
+@auth_bp.route('/change-password', methods=['POST'])
+@login_required
+def change_password():
+    """Update password for authenticated user."""
+    user = request.current_user
+    data = request.get_json() or {}
+    current_password = (data.get('currentPassword') or data.get('current_password') or '').strip()
+    new_password = (data.get('newPassword') or data.get('new_password') or '').strip()
+    confirm_password = (data.get('confirmPassword') or data.get('confirm_password') or '').strip()
+
+    if not current_password or not new_password:
+        return jsonify({'success': False, 'error': 'Current password and new password are required.'}), 400
+
+    if not UserModel.verify_password(user, current_password):
+        return jsonify({'success': False, 'error': 'Current password is incorrect.'}), 400
+
+    if len(new_password) < 6:
+        return jsonify({'success': False, 'error': 'Password must be at least 6 characters long.'}), 400
+
+    if confirm_password and new_password != confirm_password:
+        return jsonify({'success': False, 'error': 'Passwords do not match.'}), 400
+
+    UserModel.change_password(user['id'], new_password)
+    return jsonify({
+        'success': True,
+        'message': 'Password changed successfully.'
+    }), 200
+
+
