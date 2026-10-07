@@ -1,4 +1,4 @@
-export type UserRole = 'Student' | 'Mentor' | 'Class Incharge' | 'HOD';
+export type UserRole = 'Student' | 'Mentor' | 'Class Incharge' | 'HOD' | 'Admin';
 
 export type FacultyRole = 'Mentor' | 'Class Incharge' | 'HOD';
 
@@ -206,4 +206,51 @@ export interface NotificationItem {
   read: boolean;
   type: 'info' | 'success' | 'warning' | 'error';
   relatedRequestId?: string;
+}
+
+export interface AdminStats {
+  totalStudents: number;
+  totalMentors: number;
+  totalClassIncharges: number;
+  totalHODs: number;
+  totalODRequests: number;
+  pendingODRequests: number;
+  approvedODRequests: number;
+  rejectedODRequests: number;
+  pendingCertificates: number;
+  statusDistribution: Record<string, number>;
+  monthlyDistribution: Record<string, number>;
+  departmentDistribution: Record<string, number>;
+  recentActivities: {
+    id: string;
+    action: string;
+    details: string;
+    timestamp: string;
+    status: string;
+  }[];
+  recentODRequests: ODRequest[];
+}
+
+export interface AdminSystemSettings {
+  id: string;
+  min_attendance_percent: number;
+  cgpa_exemption_threshold: number;
+  max_od_allowance_percent: number;
+  academic_year: string;
+  semester_working_days: number;
+  email_notifications_enabled: boolean;
+  sms_notifications_enabled: boolean;
+  auto_escalate_hours: number;
+  updated_at?: string;
+  updated_by?: string;
+}
+
+export interface AdminAuditLog {
+  id: string;
+  user_id?: string;
+  action: string;
+  details?: string;
+  changes?: Record<string, any>;
+  ip_address?: string;
+  created_at: string;
 }

@@ -23,6 +23,19 @@ import { Notifications } from './pages/Notifications';
 import { Profile } from './pages/Profile';
 import { StudentLayout } from './layouts/StudentLayout';
 
+// Admin Sub-Pages & Layout
+import { AdminLayout } from './layouts/AdminLayout';
+import { AdminDashboard } from './pages/admin/AdminDashboard';
+import { AdminStudents } from './pages/admin/AdminStudents';
+import { AdminFaculty } from './pages/admin/AdminFaculty';
+import { AdminODRequests } from './pages/admin/AdminODRequests';
+import { AdminAcademic } from './pages/admin/AdminAcademic';
+import { AdminCertificates } from './pages/admin/AdminCertificates';
+import { AdminReports } from './pages/admin/AdminReports';
+import { AdminAuditLogs } from './pages/admin/AdminAuditLogs';
+import { AdminSettings } from './pages/admin/AdminSettings';
+import { AdminLogin } from './pages/admin/AdminLogin';
+
 // Toast & Auth Helpers
 import { ToastProvider } from './components/Toast';
 import { getAuthSession, getRoleDashboardPath } from './data/mockData';
@@ -37,13 +50,19 @@ interface ProtectedRouteProps {
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles, children }) => {
   const session = getAuthSession();
 
-  // 1. Unauthenticated users -> strictly redirect to /login
+  // 1. Unauthenticated users -> redirect to dedicated portal
   if (!session) {
+    if (allowedRoles.includes('Admin')) {
+      return <Navigate to="/admin/login" replace />;
+    }
     return <Navigate to="/login" replace />;
   }
 
   // 2. Unauthorized role access -> redirect to user's authorized role dashboard
   if (!allowedRoles.includes(session.role)) {
+    if (allowedRoles.includes('Admin')) {
+      return <Navigate to="/admin/login" replace />;
+    }
     const targetDashboard = getRoleDashboardPath(session.role);
     return <Navigate to={targetDashboard} replace />;
   }
@@ -81,6 +100,7 @@ const AppShell: React.FC = () => {
       {/* 1. Root & Common Login Route */}
       <Route path="/" element={<RootRedirect />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/admin/login" element={<AdminLogin />} />
       <Route path="/verify-email/:token" element={<VerifyEmail />} />
       <Route path="/reset-password/:token" element={<ResetPassword />} />
 
@@ -170,7 +190,30 @@ const AppShell: React.FC = () => {
         }
       />
 
-      {/* 6. Catch-all fallback */}
+      {/* 6. ADMIN DEDICATED PROTECTED ROUTES */}
+      <Route
+        path="/admin/*"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']}>
+            <AdminLayout>
+              <Routes>
+                <Route path="dashboard" element={<AdminDashboard />} />
+                <Route path="students" element={<AdminStudents />} />
+                <Route path="faculty" element={<AdminFaculty />} />
+                <Route path="od-requests" element={<AdminODRequests />} />
+                <Route path="academic" element={<AdminAcademic />} />
+                <Route path="certificates" element={<AdminCertificates />} />
+                <Route path="reports" element={<AdminReports />} />
+                <Route path="audit-logs" element={<AdminAuditLogs />} />
+                <Route path="settings" element={<AdminSettings />} />
+                <Route path="*" element={<Navigate to="dashboard" replace />} />
+              </Routes>
+            </AdminLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      {/* 7. Catch-all fallback */}
       <Route 
         path="*" 
         element={

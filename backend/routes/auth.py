@@ -36,11 +36,13 @@ ROLE_DASHBOARDS = {
     'Mentor': '/faculty/dashboard',
     'Class Incharge': '/class-incharge/dashboard',
     'HOD': '/hod/dashboard',
+    'Admin': '/admin/dashboard',
     'student': '/student/dashboard',
     'mentor': '/faculty/dashboard',
     'faculty': '/faculty/dashboard',
     'class_incharge': '/class-incharge/dashboard',
     'hod': '/hod/dashboard',
+    'admin': '/admin/dashboard',
 }
 
 def generate_auth_token(user_id, role):

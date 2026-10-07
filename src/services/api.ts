@@ -1363,3 +1363,463 @@ export async function apiVerifyCertificate(
     return { success: false, error: err.message || 'Network error verifying certificate.' };
   }
 }
+
+// ==========================================
+// ADMIN DASHBOARD & SYSTEM MANAGEMENT APIS
+// ==========================================
+
+export async function apiGetAdminStats(token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/stats`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    const data = await res.json().catch(() => ({}));
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Network error fetching admin stats.' };
+  }
+}
+
+export async function apiGetAdminStudents(
+  params?: { search?: string; department?: string; year?: string; section?: string; status?: string },
+  token?: string
+) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const url = new URL(`${API_BASE}/admin/students`, window.location.origin);
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) url.searchParams.set(k, v);
+      });
+    }
+
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to fetch students.' };
+  }
+}
+
+export async function apiCreateAdminStudent(payload: any, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/students`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to create student.' };
+  }
+}
+
+export async function apiUpdateAdminStudent(studentId: string, payload: any, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/students/${encodeURIComponent(studentId)}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update student.' };
+  }
+}
+
+export async function apiToggleUserStatus(userId: string, status: string, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/users/${encodeURIComponent(userId)}/status`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ status }),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update user status.' };
+  }
+}
+
+export async function apiGetAdminStudentDetails(studentId: string, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/students/${encodeURIComponent(studentId)}/details`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to fetch student details.' };
+  }
+}
+
+export async function apiGetAdminFaculty(
+  params?: { search?: string; role?: string; department?: string; status?: string },
+  token?: string
+) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const url = new URL(`${API_BASE}/admin/faculty`, window.location.origin);
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) url.searchParams.set(k, v);
+      });
+    }
+
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to fetch faculty.' };
+  }
+}
+
+export async function apiCreateAdminFaculty(payload: any, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/faculty`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to create faculty.' };
+  }
+}
+
+export async function apiUpdateAdminFaculty(facultyId: string, payload: any, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/faculty/${encodeURIComponent(facultyId)}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update faculty.' };
+  }
+}
+
+export async function apiGetAdminODRequests(
+  params?: {
+    status?: string;
+    stage?: string;
+    department?: string;
+    student_id?: string;
+    from_date?: string;
+    to_date?: string;
+    certificate_status?: string;
+    search?: string;
+  },
+  token?: string
+) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const url = new URL(`${API_BASE}/admin/od-requests`, window.location.origin);
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) url.searchParams.set(k, v);
+      });
+    }
+
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to fetch OD requests.' };
+  }
+}
+
+export async function apiGetAdminODRequestDetail(requestId: string, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/od-requests/${encodeURIComponent(requestId)}`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to fetch OD request detail.' };
+  }
+}
+
+export async function apiGetAdminAcademic(
+  params?: { search?: string; department?: string; year?: string; section?: string },
+  token?: string
+) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const url = new URL(`${API_BASE}/admin/academic`, window.location.origin);
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) url.searchParams.set(k, v);
+      });
+    }
+
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to fetch academic records.' };
+  }
+}
+
+export async function apiUpdateAdminStudentAcademic(studentId: string, payload: any, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/academic/student/${encodeURIComponent(studentId)}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update academic record.' };
+  }
+}
+
+export async function apiUploadAdminAcademicExcel(file: File, token?: string) {
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/academic/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to upload academic Excel file.' };
+  }
+}
+
+export async function apiConfirmAdminAcademicExcel(records: any[], academicYear?: string, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/academic/confirm`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ records, academic_year: academicYear }),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to confirm academic records.' };
+  }
+}
+
+export async function apiGetAdminCertificates(
+  params?: { status?: string; search?: string; department?: string },
+  token?: string
+) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const url = new URL(`${API_BASE}/admin/certificates`, window.location.origin);
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) url.searchParams.set(k, v);
+      });
+    }
+
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to fetch certificates.' };
+  }
+}
+
+export async function apiGetAdminReportsSummary(token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/reports/summary`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to fetch reports summary.' };
+  }
+}
+
+export function getAdminReportExportUrl(params?: Record<string, string>): string {
+  const url = new URL(`${API_BASE}/admin/reports/export`, window.location.origin);
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => {
+      if (v) url.searchParams.set(k, v);
+    });
+  }
+  return url.toString();
+}
+
+export async function apiDownloadAdminReportExcel(params?: Record<string, string>, token?: string) {
+  try {
+    const activeToken = resolveStoredToken(token);
+    const url = new URL(`${API_BASE}/admin/reports/export`, window.location.origin);
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) url.searchParams.set(k, v);
+      });
+    }
+    const headers: Record<string, string> = {};
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(url.toString(), {
+      headers,
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      throw new Error(`Export failed with HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `OD_System_Report_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(downloadUrl);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to export Excel report.' };
+  }
+}
+
+export async function apiGetAdminAuditLogs(limit = 100, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/audit-logs?limit=${limit}`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to fetch audit logs.' };
+  }
+}
+
+export async function apiGetAdminSettings(token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/settings`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to fetch settings.' };
+  }
+}
+
+export async function apiUpdateAdminSettings(settings: any, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/settings`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(settings),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update settings.' };
+  }
+}
