@@ -1,9 +1,14 @@
 import os
 from werkzeug.utils import secure_filename
 from flask import Blueprint, request, jsonify, send_from_directory
-from backend.models.od_request import ODRequestModel
-from backend.routes.auth import role_required
-from backend.config import Config
+try:
+    from backend.models.od_request import ODRequestModel
+    from backend.routes.auth import role_required, current_user
+    from backend.config import Config
+except ImportError:
+    from models.od_request import ODRequestModel
+    from routes.auth import role_required, current_user
+    from config import Config
 
 class_incharge_bp = Blueprint('class_incharge', __name__)
 
@@ -24,7 +29,7 @@ def get_class_incharge_od_requests():
     Retrieve all OD requests assigned to the authenticated Class Incharge from MongoDB.
     Only requests with status 'Mentor Approved' appear as pending for Class Incharge.
     """
-    ci_user = request.current_user
+    ci_user = current_user
     all_requests = ODRequestModel.list_for_class_incharge(ci_user)
 
     pending_requests = [
@@ -73,7 +78,7 @@ def get_class_incharge_od_requests():
 @role_required('Class Incharge')
 def get_class_incharge_od_request_detail(request_id):
     """Retrieve full details of a specific OD request for Class Incharge review from MongoDB."""
-    ci_user = request.current_user
+    ci_user = current_user
     req = ODRequestModel.get_by_id(request_id)
 
     if not req:
@@ -103,7 +108,7 @@ def approve_od_request_by_class_incharge(request_id):
     - Advances stage to 'HOD'
     - Logs decision in approvals and od_history collections
     """
-    ci_user = request.current_user
+    ci_user = current_user
     data = request.get_json(silent=True) or {}
     remarks = (data.get('remarks') or data.get('comments') or '').strip()
 
@@ -131,8 +136,8 @@ def approve_od_request_by_class_incharge(request_id):
         'success': True,
         'message': f"OD Request {request_id} has been endorsed and approved by Class Incharge.",
         'request': updated_req,
-        'status': updated_req.get('status'),
-        'currentStage': updated_req.get('currentStage')
+        'status': updated_req.get('status') if updated_req else None,
+        'currentStage': updated_req.get('currentStage') if updated_req else None
     }), 200
 
 @class_incharge_bp.route('/od-requests/<request_id>/reject', methods=['POST'])
@@ -145,7 +150,7 @@ def reject_od_request_by_class_incharge(request_id):
     - Updates status to 'Class Incharge Rejected' in MongoDB
     - Logs decision in approvals and od_history collections
     """
-    ci_user = request.current_user
+    ci_user = current_user
     data = request.get_json(silent=True) or {}
     reason = (data.get('reason') or data.get('remarks') or data.get('comments') or '').strip()
 
@@ -179,8 +184,8 @@ def reject_od_request_by_class_incharge(request_id):
         'success': True,
         'message': f"OD Request {request_id} has been rejected by Class Incharge.",
         'request': updated_req,
-        'status': updated_req.get('status'),
-        'rejectionReason': updated_req.get('rejectionReason')
+        'status': updated_req.get('status') if updated_req else None,
+        'rejectionReason': updated_req.get('rejectionReason') if updated_req else None
     }), 200
 
 @class_incharge_bp.route('/od-requests/<request_id>/letter', methods=['GET'])
@@ -190,7 +195,7 @@ def view_class_incharge_od_letter(request_id):
     Securely download/view the uploaded OD letter for an assigned request.
     Prevents unauthorized access and directory traversal.
     """
-    ci_user = request.current_user
+    ci_user = current_user
     req = ODRequestModel.get_by_id(request_id)
 
     if not req:

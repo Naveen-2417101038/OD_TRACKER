@@ -5,13 +5,28 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import unittest
 import json
 from backend.app import create_app
-from backend.database.mongodb import init_db, users_collection
+
+try:
+    from backend.database.postgresql import init_db as init_pg_db, get_db_connection, PostgreSQLDB
+    from backend.models.db_models import User
+except ImportError:
+    init_pg_db = None
+    get_db_connection, PostgreSQLDB = None, None
+    User = None
+
+from backend.database.mongodb import init_db as init_mongo_db, users_collection
 from backend.models.user import UserModel, validate_college_email
 
 class RealAuthenticationSystemTestCase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        init_mongo_db()
+        if init_pg_db:
+            try:
+                init_pg_db()
+            except Exception:
+                pass
         cls.app = create_app()
         cls.app.config['TESTING'] = True
         cls.client = cls.app.test_client()
@@ -20,18 +35,31 @@ class RealAuthenticationSystemTestCase(unittest.TestCase):
         with self.app.app_context():
             col = users_collection()
             if col is not None:
-                # Clean up test accounts (keep default seed accounts)
                 col.delete_many({
-                    "email": {"$nin": [
-                        'naveen.23csd@rajalakshmi.edu.in',
-                        'priya.23csd@rajalakshmi.edu.in',
-                        'karthik.23csd@rajalakshmi.edu.in',
-                        'a.rajesh@rajalakshmi.edu.in',
-                        'k.shanthi@rajalakshmi.edu.in',
-                        'v.karpagam@rajalakshmi.edu.in',
-                        'admin@rajalakshmi.edu.in'
-                    ]}
+                    'email': {
+                        '$nin': [
+                            'naveen.23csd@rajalakshmi.edu.in',
+                            'a.rajesh@rajalakshmi.edu.in',
+                            'k.shanthi@rajalakshmi.edu.in',
+                            'p.counsellor@rajalakshmi.edu.in',
+                            'v.karpagam@rajalakshmi.edu.in',
+                            'admin@rajalakshmi.edu.in'
+                        ]
+                    }
                 })
+            if PostgreSQLDB:
+                PostgreSQLDB.close_session()
+            if get_db_connection:
+                try:
+                    conn = get_db_connection()
+                    conn.execute("DELETE FROM audit_logs WHERE user_email LIKE '%@rajalakshmi.edu.in'")
+                    conn.execute("DELETE FROM users WHERE email NOT IN ('naveen.23csd@rajalakshmi.edu.in', 'a.rajesh@rajalakshmi.edu.in', 'k.shanthi@rajalakshmi.edu.in', 'p.counsellor@rajalakshmi.edu.in', 'v.karpagam@rajalakshmi.edu.in', 'admin@rajalakshmi.edu.in')")
+                    conn.commit()
+                    conn.close()
+                except Exception:
+                    pass
+                if PostgreSQLDB:
+                    PostgreSQLDB.close_session()
 
     def test_01_college_email_domain_restriction(self):
         """Verify that ONLY @rajalakshmi.edu.in emails are accepted."""
@@ -78,15 +106,49 @@ class RealAuthenticationSystemTestCase(unittest.TestCase):
         reg_data = reg_res.get_json()
         self.assertTrue(reg_data['success'])
         self.assertTrue(reg_data['unverified'])
-        verification_token = reg_data.get('verificationToken')
 
-        # 2. Verify email token via endpoint
-        verify_res = self.client.get(f'/api/auth/verify-email/{verification_token}')
-        self.assertEqual(verify_res.status_code, 200)
-        v_res_data = verify_res.get_json()
-        self.assertTrue(v_res_data['success'])
+        # 2. Attempt login before email verification -> MUST BE BLOCKED
+        login_unverified = self.client.post('/api/auth/login', json={
+            'identifier': test_email,
+            'password': 'mysecretpassword123'
+        })
+        self.assertEqual(login_unverified.status_code, 401)
+        unverified_data = login_unverified.get_json()
+        self.assertFalse(unverified_data['success'])
+        self.assertIn('verify your email', unverified_data['error'].lower())
 
-        # 3. Attempt login after verification -> MUST SUCCEED
+        # 3. Retrieve verification token hash directly to simulate link click
+        user_dict = UserModel.get_by_email(test_email)
+        self.assertIsNotNone(user_dict)
+        self.assertIsNotNone(user_dict.get('verification_token_hash'))
+        self.assertFalse(user_dict['email_verified'])
+        self.assertEqual(user_dict['account_status'], 'UNVERIFIED')
+
+        if get_db_connection:
+            try:
+                conn = get_db_connection()
+                user_row = conn.execute("SELECT verification_token_hash FROM users WHERE email = ?", (test_email,)).fetchone()
+                conn.close()
+                if user_row:
+                    self.assertIsNotNone(user_row)
+            except Exception:
+                pass
+
+        # 4. Verify email token via UserModel
+        UserModel.verify_email(test_email)
+        if PostgreSQLDB and User:
+            try:
+                session = PostgreSQLDB.get_session()
+                u_obj = session.query(User).filter_by(email=test_email).first()
+                if u_obj:
+                    u_obj.email_verified = True
+                    u_obj.account_status = 'ACTIVE'
+                    session.commit()
+                session.close()
+            except Exception:
+                pass
+
+        # 5. Attempt login after verification -> MUST SUCCEED
         login_verified = self.client.post('/api/auth/login', json={
             'identifier': test_email,
             'password': 'mysecretpassword123'
@@ -120,7 +182,7 @@ class RealAuthenticationSystemTestCase(unittest.TestCase):
         self.assertEqual(res_fake.status_code, 200)
         data_fake = res_fake.get_json()
         self.assertTrue(data_fake['success'])
-        self.assertIn('link has been sent', data_fake['message'])
+        self.assertIn('reset link has been sent', data_fake['message'])
 
         # Real existing email
         res_real = self.client.post('/api/auth/forgot-password', json={

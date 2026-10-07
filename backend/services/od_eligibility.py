@@ -53,7 +53,7 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
         rejection_reason       – set when eligible is False
         od_limit_percent       – 10.0
     """
-    clean_id = (str(student_id) or '').strip()
+    clean_id = (student_id or '').strip()
     if not clean_id:
         return _not_found_result(clean_id)
 
@@ -91,10 +91,27 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
         if student_user and student_user.get('attendance_percentage') is not None:
             overall_pct = float(student_user['attendance_percentage'])
 
-    # 2. Default fallback if student exists or standard institutional default
+    # 2. Fallback to PostgreSQL/SQLite if MongoDB had no record
+    if overall_pct is None:
+        try:
+            from backend.database.postgresql import get_db_session
+            from backend.models.db_models import Student, Attendance
+            session = get_db_session()
+            st = session.query(Student).filter(
+                (Student.user_id == clean_id) | (Student.register_number == clean_id)
+            ).first()
+            if st:
+                att_val = getattr(st, 'overall_attendance', None)
+                overall_pct = float(att_val) if att_val is not None else 75.0
+                days_val = getattr(st, 'total_working_days', None)
+                total_classes = int(days_val) if days_val is not None else 120
+            session.close()
+        except Exception:
+            pass
+
+    # Default fallback if student exists or standard default
     if overall_pct is None:
         overall_pct = 85.0
-
 
     total_attended = int(total_classes * overall_pct / 100.0)
 
@@ -102,7 +119,8 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
     od_used_days = 0.0
     approved_statuses = [
         'Pending', 'Mentor Approved', 'Class Incharge Approved',
-        'HOD Approved', 'Approved'
+        'HOD Approved', 'HOD Approved - Certificate Pending',
+        'Certificate Submitted', 'Approved'
     ]
 
     target_uid = (student_user.get('id') if student_user else None) or clean_id

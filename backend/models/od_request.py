@@ -1,14 +1,31 @@
+import os
+import sys
 import uuid
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
+
+# Ensure project root is in sys.path so 'backend.*' imports succeed in all environments
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 from bson import ObjectId
-from backend.database.mongodb import (
-    od_requests_collection,
-    approvals_collection,
-    od_history_collection,
-    certificates_collection,
-    notifications_collection
-)
+try:
+    from backend.database.mongodb import (
+        od_requests_collection,
+        approvals_collection,
+        od_history_collection,
+        certificates_collection,
+        notifications_collection
+    )
+except ImportError:
+    from database.mongodb import (
+        od_requests_collection,
+        approvals_collection,
+        od_history_collection,
+        certificates_collection,
+        notifications_collection
+    )
 
 class ODRequestModel:
     @staticmethod
@@ -20,6 +37,156 @@ class ODRequestModel:
             return max(1.0, float(diff))
         except Exception:
             return 1.0
+
+    @staticmethod
+    def parse_datetime(dt_val):
+        """Robust parser for datetimes across string formats and datetime objects."""
+        if not dt_val:
+            return None
+        if isinstance(dt_val, datetime):
+            return dt_val
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%fZ",
+            "%Y-%m-%d"
+        ):
+            try:
+                return datetime.strptime(str(dt_val).strip(), fmt)
+            except ValueError:
+                continue
+        return None
+
+    @staticmethod
+    def get_event_end_and_deadline(item):
+        """
+        Calculate and return (end_datetime, certificate_deadline_datetime).
+        The certificate deadline is ALWAYS exactly 24 hours from event_end_datetime.
+        """
+        if not item:
+            return None, None
+
+        end_dt = ODRequestModel.parse_datetime(item.get('event_end_datetime'))
+        if not end_dt:
+            to_date = item.get('to_date') or item.get('toDate') or item.get('from_date') or item.get('fromDate')
+            to_time = item.get('to_time') or item.get('toTime') or '17:00'
+            t_to = to_time[:5] if len(str(to_time)) >= 5 else '17:00'
+            if to_date:
+                try:
+                    end_dt = datetime.strptime(f"{to_date} {t_to}", "%Y-%m-%d %H:%M")
+                except Exception:
+                    try:
+                        end_dt = datetime.strptime(to_date, "%Y-%m-%d")
+                    except Exception:
+                        end_dt = None
+
+        deadline_dt = ODRequestModel.parse_datetime(item.get('certificate_deadline'))
+        if not deadline_dt and end_dt:
+            deadline_dt = end_dt + timedelta(hours=24)
+
+        return end_dt, deadline_dt
+
+    @staticmethod
+    def expire_single_request(request_id):
+        """Automatically mark a single OD request as rejected when 24h certificate window has lapsed."""
+        col = od_requests_collection()
+        hist_col = od_history_collection()
+        notif_col = notifications_collection()
+        if col is None or not request_id:
+            return None
+
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        rejection_reason = "OD rejected because the required certificate was not uploaded within 24 hours after the event ended."
+
+        clean_id = str(request_id).strip()
+        query = {"id": clean_id}
+        if ObjectId.is_valid(clean_id):
+            query = {"$or": [{"id": clean_id}, {"_id": ObjectId(clean_id)}]}
+
+        doc = col.find_one(query)
+        if not doc:
+            return None
+
+        # Do not overwrite if already Completed/Approved with Verified certificate
+        if doc.get('status') == 'Approved' and doc.get('certificate_status') == 'Verified':
+            return doc
+
+        col.update_one(
+            {"_id": doc['_id']},
+            {"$set": {
+                "status": "Rejected",
+                "current_stage": "Rejected",
+                "certificate_status": "Deadline Expired",
+                "rejection_reason": rejection_reason,
+                "remarks": rejection_reason,
+                "updated_at": now_str
+            }}
+        )
+
+        if hist_col is not None:
+            hist_col.insert_one({
+                'id': f"HIST_{uuid.uuid4().hex[:8].upper()}",
+                'request_id': doc.get('id'),
+                'student_id': doc.get('student_id'),
+                'action': 'Certificate Deadline Expired',
+                'performed_by_id': 'SYSTEM',
+                'performed_by_name': 'Automated Expiration Service',
+                'role': 'System',
+                'stage': 'Certificate Window Expired',
+                'remarks': rejection_reason,
+                'created_at': now_str
+            })
+
+        if notif_col is not None:
+            notif_col.insert_one({
+                'id': f"NOTIF_{uuid.uuid4().hex[:8].upper()}",
+                'user_id': doc.get('student_id'),
+                'title': "OD Request Rejected — Certificate Deadline Expired",
+                'message': f"Your OD request for '{doc.get('event_name')}' has been rejected because the mandatory participation certificate was not uploaded within 24 hours after the event ended.",
+                'type': 'rejection',
+                'link': "/student/dashboard",
+                'is_read': 0,
+                'created_at': now_str
+            })
+
+        return ODRequestModel.get_by_id(doc.get('id'))
+
+    @staticmethod
+    def check_and_expire_deadlines():
+        """
+        Scan all active OD requests awaiting certificate upload.
+        If current server time > certificate_deadline, automatically reject with deadline expired reason.
+        """
+        col = od_requests_collection()
+        if col is None:
+            return 0
+
+        now = datetime.now()
+        # Requests that are approved/hold awaiting certificate
+        query = {
+            "status": {"$in": ["HOD Approved - Certificate Pending", "HOD Approved", "Approved"]},
+            "certificate_status": {"$in": ["Not Uploaded", "Pending Upload", None]}
+        }
+
+        expired_count = 0
+        try:
+            cursor = col.find(query)
+            docs = list(cursor)
+        except Exception:
+            docs = []
+
+        for doc in docs:
+            # If doc already has verified certificate, skip
+            if doc.get('certificate_status') == 'Verified':
+                continue
+
+            end_dt, deadline_dt = ODRequestModel.get_event_end_and_deadline(doc)
+            if deadline_dt and now > deadline_dt:
+                ODRequestModel.expire_single_request(doc.get('id') or str(doc['_id']))
+                expired_count += 1
+
+        return expired_count
 
     @staticmethod
     def to_dict(doc):
@@ -61,6 +228,18 @@ class ODRequestModel:
         item['createdAt'] = item.get('created_at')
         item['updatedAt'] = item.get('updated_at')
 
+        # Add event start/end datetime and certificate deadline tracking
+        end_dt, deadline_dt = ODRequestModel.get_event_end_and_deadline(item)
+        from_d = item.get('fromDate') or item.get('from_date') or ''
+        from_t = item.get('fromTime') or item.get('from_time') or '09:00'
+        t_from = from_t[:5] if len(str(from_t)) >= 5 else '09:00'
+        
+        item['eventStartDatetime'] = item.get('event_start_datetime') or (f"{from_d} {t_from}:00" if from_d else None)
+        item['eventEndDatetime'] = (end_dt.strftime('%Y-%m-%d %H:%M:%S') if end_dt else item.get('event_end_datetime'))
+        item['certificateDeadline'] = (deadline_dt.strftime('%Y-%m-%d %H:%M:%S') if deadline_dt else item.get('certificate_deadline'))
+        item['certificateSubmittedAt'] = item.get('certificate_submitted_at')
+        item['hodApprovedAt'] = item.get('hod_approved_at')
+
         # Structure 4-tier stages for timeline rendering
         created_dt = item.get('created_at', '')
         c_date = str(created_dt).split(' ')[0] if ' ' in str(created_dt) else str(created_dt)[:10]
@@ -74,7 +253,7 @@ class ODRequestModel:
         # Mentor stage status determination
         mentor_status = 'Pending'
         mentor_feedback = 'Under Mentor evaluation' if status == 'Pending' and curr_stage == 'Mentor' else None
-        if status in ['Mentor Approved', 'Class Incharge Approved', 'Class Incharge Rejected', 'HOD Approved', 'Approved', 'HOD Rejected'] or curr_stage in ['Class Incharge', 'HOD', 'Approved']:
+        if status in ['Mentor Approved', 'Class Incharge Approved', 'Class Incharge Rejected', 'HOD Approved', 'HOD Approved - Certificate Pending', 'Certificate Submitted', 'Approved', 'HOD Rejected'] or curr_stage in ['Class Incharge', 'HOD', 'Certificate Pending', 'Certificate Verification', 'Approved', 'Completed']:
             mentor_status = 'Approved'
             mentor_feedback = (remarks if status == 'Mentor Approved' else None) or 'Recommended and forwarded by Mentor'
         elif status == 'Mentor Rejected' or (status == 'Rejected' and curr_stage == 'Mentor'):
@@ -84,7 +263,7 @@ class ODRequestModel:
         # Class Incharge stage status determination
         ci_status = 'Unreached'
         ci_feedback = None
-        if status in ['Class Incharge Approved', 'Approved', 'HOD Approved', 'HOD Rejected'] or curr_stage in ['HOD', 'Approved']:
+        if status in ['Class Incharge Approved', 'HOD Approved', 'HOD Approved - Certificate Pending', 'Certificate Submitted', 'Approved', 'HOD Rejected'] or curr_stage in ['HOD', 'Certificate Pending', 'Certificate Verification', 'Approved', 'Completed']:
             ci_status = 'Approved'
             ci_feedback = (remarks if status == 'Class Incharge Approved' else None) or 'Endorsed and forwarded to HOD by Class Incharge'
         elif status == 'Class Incharge Rejected' or (status == 'Rejected' and curr_stage == 'Class Incharge'):
@@ -97,15 +276,19 @@ class ODRequestModel:
         # HOD stage status determination
         hod_status = 'Unreached'
         hod_feedback = None
-        if status in ['Approved', 'HOD Approved'] or curr_stage == 'Approved':
+        if status in ['Approved', 'HOD Approved', 'HOD Approved - Certificate Pending', 'Certificate Submitted'] or curr_stage in ['Approved', 'Certificate Pending', 'Certificate Verification', 'Completed']:
             hod_status = 'Approved'
-            hod_feedback = remarks or 'Executive approval granted by HOD'
+            hod_feedback = remarks or 'Executive approval granted by HOD. Participation certificate mandatory after event.'
         elif status in ['HOD Rejected'] or (status == 'Rejected' and curr_stage == 'HOD'):
             hod_status = 'Rejected'
             hod_feedback = rejection_reason or remarks or 'Application declined by HOD'
         elif status == 'Class Incharge Approved' and curr_stage == 'HOD':
             hod_status = 'Pending'
             hod_feedback = 'Awaiting executive sanction from HOD'
+        elif status == 'Rejected' and 'within 24 hours' in (rejection_reason or '').lower():
+            # If rejected because certificate deadline expired, HOD had approved
+            hod_status = 'Approved'
+            hod_feedback = 'Executive approval was granted by HOD (Certificate deadline later expired).'
 
         stages = {
             'submitted': {
@@ -198,7 +381,7 @@ class ODRequestModel:
 
     @staticmethod
     def create(data):
-        """Insert a new OD Request into MongoDB database."""
+        """Insert a new OD Request into MongoDB database with 3-day advance validation."""
         col = od_requests_collection()
         hist_col = od_history_collection()
         notif_col = notifications_collection()
@@ -206,11 +389,49 @@ class ODRequestModel:
         if col is None:
             raise RuntimeError("MongoDB connection not established.")
 
-        req_id = data.get('id') or f"REQ_{datetime.now().strftime('%Y%m%d')}_{str(uuid.uuid4().hex[:6]).upper()}"
         from_date = data.get('from_date') or data.get('fromDate') or data.get('eventDate')
+        if not from_date:
+            raise ValueError("Event Start Date is required.")
+
+        # Requirement 1: OD Application Time Limit — Minimum 3 Days Before Event
+        server_today = datetime.now().date()
+        try:
+            d_from_dt = datetime.strptime(from_date, "%Y-%m-%d").date()
+        except Exception:
+            raise ValueError("Invalid Event Start Date format. Please use YYYY-MM-DD.")
+
+        if d_from_dt < server_today:
+            raise ValueError("Event start date cannot be in the past. OD requests must be submitted at least 3 days before the event date.")
+
+        if (d_from_dt - server_today).days < 3:
+            raise ValueError("OD requests must be submitted at least 3 days before the event date.")
+
+        req_id = data.get('id') or f"REQ_{datetime.now().strftime('%Y%m%d')}_{uuid.uuid4().hex[:6].upper()}"
         to_date = data.get('to_date') or data.get('toDate') or from_date
         num_days = data.get('number_of_days') or ODRequestModel.calculate_days(from_date, to_date)
+        from_time = data.get('from_time') or data.get('fromTime') or '09:00'
+        to_time = data.get('to_time') or data.get('toTime') or '17:00'
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # Standardize Event Start Datetime, Event End Datetime & Certificate Deadline
+        t_from = from_time[:5] if len(str(from_time)) >= 5 else '09:00'
+        t_to = to_time[:5] if len(str(to_time)) >= 5 else '17:00'
+
+        try:
+            start_dt = datetime.strptime(f"{from_date} {t_from}", "%Y-%m-%d %H:%M")
+            event_start_datetime = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            event_start_datetime = f"{from_date} 09:00:00"
+
+        try:
+            end_dt = datetime.strptime(f"{to_date} {t_to}", "%Y-%m-%d %H:%M")
+            event_end_datetime = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+            # Requirement 5: Exactly 24 hours from event_end_datetime
+            deadline_dt = end_dt + timedelta(hours=24)
+            certificate_deadline = deadline_dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            event_end_datetime = f"{to_date} 17:00:00"
+            certificate_deadline = None
 
         doc = {
             'id': req_id,
@@ -226,8 +447,13 @@ class ODRequestModel:
             'venue': data.get('venue'),
             'from_date': from_date,
             'to_date': to_date,
-            'from_time': data.get('from_time') or data.get('fromTime') or '09:00',
-            'to_time': data.get('to_time') or data.get('toTime') or '17:00',
+            'from_time': from_time,
+            'to_time': to_time,
+            'event_start_datetime': event_start_datetime,
+            'event_end_datetime': event_end_datetime,
+            'certificate_deadline': certificate_deadline,
+            'certificate_submitted_at': None,
+            'hod_approved_at': None,
             'number_of_days': num_days,
             'reason': data.get('reason'),
             'description': data.get('description'),
@@ -245,7 +471,7 @@ class ODRequestModel:
 
         # Log submission event in od_history collection
         if hist_col is not None:
-            hist_id = f"HIST_{str(uuid.uuid4().hex[:8]).upper()}"
+            hist_id = f"HIST_{uuid.uuid4().hex[:8].upper()}"
             hist_col.insert_one({
                 'id': hist_id,
                 'request_id': req_id,
@@ -263,6 +489,7 @@ class ODRequestModel:
 
     @staticmethod
     def get_by_id(request_id):
+        ODRequestModel.check_and_expire_deadlines()
         col = od_requests_collection()
         if col is None:
             return None
@@ -277,6 +504,7 @@ class ODRequestModel:
 
     @staticmethod
     def list_all():
+        ODRequestModel.check_and_expire_deadlines()
         col = od_requests_collection()
         if col is None:
             return []
@@ -285,6 +513,7 @@ class ODRequestModel:
 
     @staticmethod
     def list_by_student(student_id):
+        ODRequestModel.check_and_expire_deadlines()
         col = od_requests_collection()
         if col is None:
             return []
@@ -307,6 +536,7 @@ class ODRequestModel:
         List all requests assigned to this mentor's department/ward.
         Sorted with pending requests first.
         """
+        ODRequestModel.check_and_expire_deadlines()
         col = od_requests_collection()
         if col is None:
             return []
@@ -368,7 +598,7 @@ class ODRequestModel:
         # Insert approval audit record
         if appr_col is not None:
             appr_col.insert_one({
-                'id': f"APPR_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"APPR_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'reviewer_id': mentor_user.get('id') or mentor_user.get('userId'),
                 'reviewer_name': mentor_user.get('name'),
@@ -381,7 +611,7 @@ class ODRequestModel:
         # Insert history audit trail
         if hist_col is not None:
             hist_col.insert_one({
-                'id': f"HIST_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"HIST_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'student_id': req['studentId'],
                 'action': 'Mentor Approved',
@@ -396,7 +626,7 @@ class ODRequestModel:
         # Send notification to student
         if notif_col is not None:
             notif_col.insert_one({
-                'id': f"NOTIF_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"NOTIF_{uuid.uuid4().hex[:8].upper()}",
                 'user_id': req['studentId'],
                 'title': f"OD Request Recommended by Mentor",
                 'message': f"Your OD request for '{req['eventName']}' was approved by Mentor and forwarded to Class Incharge.",
@@ -453,7 +683,7 @@ class ODRequestModel:
 
         if appr_col is not None:
             appr_col.insert_one({
-                'id': f"APPR_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"APPR_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'reviewer_id': mentor_user.get('id') or mentor_user.get('userId'),
                 'reviewer_name': mentor_user.get('name'),
@@ -465,7 +695,7 @@ class ODRequestModel:
 
         if hist_col is not None:
             hist_col.insert_one({
-                'id': f"HIST_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"HIST_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'student_id': req['studentId'],
                 'action': 'Mentor Rejected',
@@ -479,7 +709,7 @@ class ODRequestModel:
 
         if notif_col is not None:
             notif_col.insert_one({
-                'id': f"NOTIF_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"NOTIF_{uuid.uuid4().hex[:8].upper()}",
                 'user_id': req['studentId'],
                 'title': f"OD Request Declined by Mentor",
                 'message': f"Your OD request for '{req['eventName']}' was declined by Mentor: {clean_reason}",
@@ -497,6 +727,7 @@ class ODRequestModel:
         List all requests for the Class Incharge's assigned department.
         Requests with status 'Mentor Approved' are pending Class Incharge endorsement.
         """
+        ODRequestModel.check_and_expire_deadlines()
         col = od_requests_collection()
         if col is None:
             return []
@@ -556,7 +787,7 @@ class ODRequestModel:
 
         if appr_col is not None:
             appr_col.insert_one({
-                'id': f"APPR_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"APPR_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'reviewer_id': ci_user.get('id') or ci_user.get('userId'),
                 'reviewer_name': ci_user.get('name'),
@@ -568,7 +799,7 @@ class ODRequestModel:
 
         if hist_col is not None:
             hist_col.insert_one({
-                'id': f"HIST_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"HIST_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'student_id': req['studentId'],
                 'action': 'Class Incharge Approved',
@@ -582,7 +813,7 @@ class ODRequestModel:
 
         if notif_col is not None:
             notif_col.insert_one({
-                'id': f"NOTIF_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"NOTIF_{uuid.uuid4().hex[:8].upper()}",
                 'user_id': req['studentId'],
                 'title': f"OD Request Endorsed by Class Incharge",
                 'message': f"Your OD request for '{req['eventName']}' was endorsed and sent to HOD for final approval.",
@@ -639,7 +870,7 @@ class ODRequestModel:
 
         if appr_col is not None:
             appr_col.insert_one({
-                'id': f"APPR_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"APPR_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'reviewer_id': ci_user.get('id') or ci_user.get('userId'),
                 'reviewer_name': ci_user.get('name'),
@@ -651,7 +882,7 @@ class ODRequestModel:
 
         if hist_col is not None:
             hist_col.insert_one({
-                'id': f"HIST_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"HIST_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'student_id': req['studentId'],
                 'action': 'Class Incharge Rejected',
@@ -665,7 +896,7 @@ class ODRequestModel:
 
         if notif_col is not None:
             notif_col.insert_one({
-                'id': f"NOTIF_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"NOTIF_{uuid.uuid4().hex[:8].upper()}",
                 'user_id': req['studentId'],
                 'title': f"OD Request Declined by Class Incharge",
                 'message': f"Your OD request for '{req['eventName']}' was declined by Class Incharge: {clean_reason}",
@@ -683,6 +914,7 @@ class ODRequestModel:
         List all requests for the HOD's department.
         Requests with status 'Class Incharge Approved' are pending HOD sanction.
         """
+        ODRequestModel.check_and_expire_deadlines()
         col = od_requests_collection()
         if col is None:
             return []
@@ -703,10 +935,11 @@ class ODRequestModel:
     @staticmethod
     def approve_by_hod(request_id, hod_user, remarks=''):
         """
-        Execute final HOD approval:
+        Execute HOD approval:
         1. Validates request is currently in 'Class Incharge Approved' status with stage 'HOD'.
-        2. Sets status to 'Approved' and current_stage to 'Approved'.
-        3. Records in approvals and od_history collections.
+        2. Sets status to 'HOD Approved - Certificate Pending' and current_stage to 'Certificate Pending'.
+        3. Holds request until student attends event and uploads certificate within 24 hours of event end.
+        4. Records in approvals and od_history collections.
         """
         col = od_requests_collection()
         appr_col = approvals_collection()
@@ -727,13 +960,16 @@ class ODRequestModel:
             return None, f"Cannot approve request: Current status is '{current_status}' (Stage: '{current_stage}'). Only Class Incharge Approved requests can receive HOD executive sanction."
 
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        actual_remarks = remarks or 'Executive approval granted by HOD'
+        actual_remarks = remarks or 'Executive approval granted by HOD. Mandatory participation certificate required within 24 hours of event ending.'
 
+        # Requirement 4: Set to HOD Approved - Certificate Pending (hold state)
         col.update_one(
             {"id": req['id']},
             {"$set": {
-                "status": "Approved",
-                "current_stage": "Approved",
+                "status": "HOD Approved - Certificate Pending",
+                "current_stage": "Certificate Pending",
+                "certificate_status": "Pending Upload",
+                "hod_approved_at": now,
                 "remarks": actual_remarks,
                 "updated_at": now
             }}
@@ -741,7 +977,7 @@ class ODRequestModel:
 
         if appr_col is not None:
             appr_col.insert_one({
-                'id': f"APPR_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"APPR_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'reviewer_id': hod_user.get('id') or hod_user.get('userId'),
                 'reviewer_name': hod_user.get('name'),
@@ -753,24 +989,24 @@ class ODRequestModel:
 
         if hist_col is not None:
             hist_col.insert_one({
-                'id': f"HIST_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"HIST_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'student_id': req['studentId'],
                 'action': 'HOD Approved',
                 'performed_by_id': hod_user.get('id') or hod_user.get('userId'),
                 'performed_by_name': hod_user.get('name'),
                 'role': 'HOD',
-                'stage': 'HOD Final Approval',
+                'stage': 'HOD Executive Sanction',
                 'remarks': actual_remarks,
                 'created_at': now
             })
 
         if notif_col is not None:
             notif_col.insert_one({
-                'id': f"NOTIF_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"NOTIF_{uuid.uuid4().hex[:8].upper()}",
                 'user_id': req['studentId'],
-                'title': f"OD Request Officially Approved by HOD!",
-                'message': f"Congratulations! Your OD application for '{req['eventName']}' has received official sanction from the HOD. You may now participate and upload your completion certificate after the event.",
+                'title': f"OD Request Approved by HOD — Certificate Pending",
+                'message': f"Congratulations! Your OD application for '{req['eventName']}' has received official sanction from the HOD. Please attend the event and upload your participation certificate within 24 hours after the event ends.",
                 'type': 'approval',
                 'link': f"/student/dashboard",
                 'is_read': 0,
@@ -824,7 +1060,7 @@ class ODRequestModel:
 
         if appr_col is not None:
             appr_col.insert_one({
-                'id': f"APPR_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"APPR_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'reviewer_id': hod_user.get('id') or hod_user.get('userId'),
                 'reviewer_name': hod_user.get('name'),
@@ -836,7 +1072,7 @@ class ODRequestModel:
 
         if hist_col is not None:
             hist_col.insert_one({
-                'id': f"HIST_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"HIST_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'student_id': req['studentId'],
                 'action': 'HOD Rejected',
@@ -850,7 +1086,7 @@ class ODRequestModel:
 
         if notif_col is not None:
             notif_col.insert_one({
-                'id': f"NOTIF_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"NOTIF_{uuid.uuid4().hex[:8].upper()}",
                 'user_id': req['studentId'],
                 'title': f"OD Request Declined by HOD",
                 'message': f"Your OD request for '{req['eventName']}' was declined by HOD: {clean_reason}",
@@ -865,10 +1101,12 @@ class ODRequestModel:
     @staticmethod
     def upload_certificate(request_id, student_user, file_url):
         """
-        Attach event certificate after OD request approval:
-        1. Updates od_requests certificate_status to 'Pending Verification'.
-        2. Records document in certificates collection.
-        3. Adds entry to od_history and notifies faculty.
+        Student uploads mandatory event certificate within 24 hours after event ends.
+        Validates:
+        1. Request is in HOD Approved hold state.
+        2. Event has actually ended.
+        3. Upload occurs within the 24-hour certificate deadline.
+        4. Transitions status from HOD Approved - Certificate Pending to Certificate Submitted.
         """
         col = od_requests_collection()
         cert_col = certificates_collection()
@@ -878,26 +1116,52 @@ class ODRequestModel:
         if col is None:
             return None, "Database not connected."
 
+        # Sweep expired deadlines first
+        ODRequestModel.check_and_expire_deadlines()
+
         req = ODRequestModel.get_by_id(request_id)
         if not req:
             return None, "OD Request not found."
 
-        if req['status'] not in ['Approved', 'HOD Approved']:
-            return None, f"Certificates can only be uploaded for Approved OD requests (Current status: '{req['status']}')."
+        # Check if already completed or expired
+        if req['status'] in ['Approved', 'Completed'] and req.get('certificateStatus') == 'Verified':
+            return None, "Certificate has already been uploaded and verified for this OD request."
 
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if req['status'] == 'Rejected' or req.get('certificateStatus') == 'Deadline Expired':
+            return None, "Certificate upload deadline has expired. The OD has been rejected."
 
+        if req['status'] not in ['HOD Approved - Certificate Pending', 'HOD Approved']:
+            return None, f"Certificates can only be uploaded for HOD Approved OD requests (Current status: '{req['status']}')."
+
+        now = datetime.now()
+        end_dt, deadline_dt = ODRequestModel.get_event_end_and_deadline(req)
+
+        # Requirement 6: Before event ends, certificate cannot be uploaded
+        if end_dt and now < end_dt:
+            return None, "Certificate upload will be available after the event ends."
+
+        # Requirement 9: Late upload after 24-hour window must be blocked
+        if deadline_dt and now > deadline_dt:
+            ODRequestModel.expire_single_request(req['id'])
+            return None, "Certificate upload deadline has expired. The OD has been rejected."
+
+        now_str = now.strftime('%Y-%m-%d %H:%M:%S')
+
+        # Requirement 8: Change status to Certificate Submitted
         col.update_one(
             {"id": req['id']},
             {"$set": {
+                "status": "Certificate Submitted",
+                "current_stage": "Certificate Verification",
                 "certificate_status": "Pending Verification",
                 "certificate_url": file_url,
-                "updated_at": now
+                "certificate_submitted_at": now_str,
+                "updated_at": now_str
             }}
         )
 
         if cert_col is not None:
-            cert_id = f"CERT_{str(uuid.uuid4().hex[:8]).upper()}"
+            cert_id = f"CERT_{uuid.uuid4().hex[:8].upper()}"
             cert_col.insert_one({
                 'id': cert_id,
                 'request_id': req['id'],
@@ -905,27 +1169,39 @@ class ODRequestModel:
                 'student_reg_no': student_user.get('identifier'),
                 'event_name': req['eventName'],
                 'certificate_file_url': file_url,
-                'upload_date': now,
+                'upload_date': now_str,
                 'status': 'Pending Verification',
                 'verified_by_id': None,
                 'verified_by_name': None,
                 'verified_at': None,
                 'remarks': None,
-                'created_at': now
+                'created_at': now_str
             })
 
         if hist_col is not None:
             hist_col.insert_one({
-                'id': f"HIST_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"HIST_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'student_id': req['studentId'],
-                'action': 'Certificate Uploaded',
+                'action': 'Certificate Submitted',
                 'performed_by_id': student_user.get('id') or student_user.get('userId'),
                 'performed_by_name': student_user.get('name'),
                 'role': 'Student',
                 'stage': 'Certificate Verification',
-                'remarks': 'Participation certificate uploaded for verification',
-                'created_at': now
+                'remarks': 'Mandatory event completion certificate uploaded on time within 24-hour window',
+                'created_at': now_str
+            })
+
+        if notif_col is not None:
+            notif_col.insert_one({
+                'id': f"NOTIF_{uuid.uuid4().hex[:8].upper()}",
+                'user_id': req['studentId'],
+                'title': "Certificate Submitted Successfully",
+                'message': f"Your participation certificate for '{req['eventName']}' was submitted within the deadline and is pending faculty verification.",
+                'type': 'certificate',
+                'link': "/student/dashboard",
+                'is_read': 0,
+                'created_at': now_str
             })
 
         return ODRequestModel.get_by_id(request_id), None
@@ -934,8 +1210,9 @@ class ODRequestModel:
     def verify_certificate(request_id, faculty_user, status='Verified', remarks=''):
         """
         Verify certificate by Mentor/Faculty:
-        1. Sets certificate_status to 'Verified' or 'Rejected' in od_requests and certificates.
-        2. Logs in od_history and sends notification to student.
+        1. If verified: sets status to 'Approved' (OD Completed), certificate_status to 'Verified'.
+        2. If rejected: sets status to 'Rejected', certificate_status to 'Rejected'.
+        3. Logs in od_history and sends notification to student.
         """
         col = od_requests_collection()
         cert_col = certificates_collection()
@@ -950,50 +1227,67 @@ class ODRequestModel:
             return None, "OD Request not found."
 
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        new_status = 'Verified' if status.lower() in ['verified', 'approved'] else 'Rejected'
+        is_approved = status.lower() in ['verified', 'approved']
+        new_cert_status = 'Verified' if is_approved else 'Rejected'
+        new_od_status = 'Approved' if is_approved else 'Rejected'
+        new_stage = 'Completed' if is_approved else 'Rejected'
+        feedback = remarks or (f"Certificate {new_cert_status.lower()} by {faculty_user.get('name')} ({faculty_user.get('role')})")
+
+        update_fields = {
+            "status": new_od_status,
+            "current_stage": new_stage,
+            "certificate_status": new_cert_status,
+            "updated_at": now
+        }
+        if not is_approved:
+            update_fields["rejection_reason"] = feedback
+            update_fields["remarks"] = feedback
 
         col.update_one(
             {"id": req['id']},
-            {"$set": {
-                "certificate_status": new_status,
-                "updated_at": now
-            }}
+            {"$set": update_fields}
         )
 
         if cert_col is not None:
             cert_col.update_many(
                 {"request_id": req['id']},
                 {"$set": {
-                    "status": new_status,
+                    "status": new_cert_status,
                     "verified_by_id": faculty_user.get('id') or faculty_user.get('userId'),
                     "verified_by_name": faculty_user.get('name'),
                     "verified_at": now,
-                    "remarks": remarks or f"Certificate {new_status} by {faculty_user.get('role')}"
+                    "remarks": feedback
                 }}
             )
 
         if hist_col is not None:
             hist_col.insert_one({
-                'id': f"HIST_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"HIST_{uuid.uuid4().hex[:8].upper()}",
                 'request_id': req['id'],
                 'student_id': req['studentId'],
-                'action': f"Certificate {new_status}",
+                'action': f"Certificate {new_cert_status}",
                 'performed_by_id': faculty_user.get('id') or faculty_user.get('userId'),
                 'performed_by_name': faculty_user.get('name'),
                 'role': faculty_user.get('role', 'Mentor'),
                 'stage': 'Certificate Verification',
-                'remarks': remarks or f"Certificate {new_status} by {faculty_user.get('name')}",
+                'remarks': feedback,
                 'created_at': now
             })
 
         if notif_col is not None:
+            notif_title = "OD Request Completed & Verified!" if is_approved else "Certificate Verification Declined"
+            notif_msg = (
+                f"Your participation certificate for '{req['eventName']}' has been verified. Your OD is officially completed and credited to your attendance record."
+                if is_approved else
+                f"Your certificate for '{req['eventName']}' was declined: {feedback}"
+            )
             notif_col.insert_one({
-                'id': f"NOTIF_{str(uuid.uuid4().hex[:8]).upper()}",
+                'id': f"NOTIF_{uuid.uuid4().hex[:8].upper()}",
                 'user_id': req['studentId'],
-                'title': f"Certificate {new_status}",
-                'message': f"Your participation certificate for '{req['eventName']}' has been {new_status.lower()} by faculty.",
-                'type': 'certificate',
-                'link': f"/student/dashboard",
+                'title': notif_title,
+                'message': notif_msg,
+                'type': 'approval' if is_approved else 'rejection',
+                'link': "/student/dashboard",
                 'is_read': 0,
                 'created_at': now
             })

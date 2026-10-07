@@ -5,6 +5,18 @@ from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError, Confi
 from werkzeug.security import generate_password_hash
 from backend.config import Config
 
+try:
+    # pyrefly: ignore [missing-import]
+    import certifi  # type: ignore
+except ImportError:
+    certifi = None
+
+try:
+    # pyrefly: ignore [missing-import]
+    import mongomock  # type: ignore
+except ImportError:
+    mongomock = None
+
 class MongoDB:
     _instance = None
     _client = None
@@ -48,15 +60,14 @@ class MongoDB:
     @classmethod
     def connect(cls):
         """Establish connection to MongoDB Atlas."""
-        if cls._is_connected and cls._db is not None:
+        if cls._db is not None:
             return cls._db
 
         uri = Config.MONGO_URI
         db_name = Config.MONGO_DB_NAME or 'od_tracking'
 
         if cls.is_placeholder_uri(uri):
-            try:
-                import mongomock
+            if mongomock is not None:
                 cls._client = mongomock.MongoClient()
                 cls._db = cls._client[db_name]
                 cls._is_connected = True
@@ -65,7 +76,7 @@ class MongoDB:
                 print(f"[!] MongoDB Atlas: Placeholder detected in .env. Running in local demo mode with seeded users.")
                 print(f"    To connect to live Atlas, update MONGO_URI in .env: MONGO_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/")
                 return cls._db
-            except Exception:
+            else:
                 cls._is_connected = False
                 cls._connection_status = "placeholder_detected"
                 cls._connection_error = "MONGO_URI is set to placeholder in .env. Please update MONGO_URI with your MongoDB Atlas connection string."
@@ -82,11 +93,8 @@ class MongoDB:
         try:
             if uri.startswith('mongodb+srv://') or 'tls=true' in uri.lower() or 'ssl=true' in uri.lower():
                 client_kwargs['tls'] = True
-                try:
-                    import certifi
+                if certifi is not None:
                     client_kwargs['tlsCAFile'] = certifi.where()
-                except ImportError:
-                    pass
 
             cls._client = MongoClient(uri, **client_kwargs)
             cls._client.admin.command('ping')
@@ -98,8 +106,7 @@ class MongoDB:
             return cls._db
         except (ConnectionFailure, ServerSelectionTimeoutError, ConfigurationError) as e:
             print(f"[-] MongoDB Atlas live connection failed: {e}")
-            try:
-                import mongomock
+            if mongomock is not None:
                 cls._client = mongomock.MongoClient()
                 cls._db = cls._client[db_name]
                 cls._is_connected = False
@@ -108,7 +115,7 @@ class MongoDB:
                 print(f"[!] Running backend with mock database fallback so server remains functional.")
                 print(f"    (Ensure your current IP is whitelisted in MongoDB Atlas under Network Access -> IP Access List)")
                 return cls._db
-            except Exception:
+            else:
                 cls._is_connected = False
                 cls._connection_status = "connection_failed"
                 cls._connection_error = str(e)

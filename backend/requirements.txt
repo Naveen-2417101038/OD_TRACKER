@@ -9,6 +9,7 @@ python-dotenv>=1.0.0
 # ── Database ──────────────────────────────────────────────────────────────────
 pymongo>=4.6.0
 dnspython>=2.6.0
+certifi>=2024.0.0
 
 # ── Excel export ──────────────────────────────────────────────────────────────
 openpyxl>=3.1.2
@@ -17,7 +18,5 @@ openpyxl>=3.1.2
 # Used by `gunicorn backend.app:app` in production deployments.
 gunicorn>=21.2.0
 
-# ── SSL/TLS & In-memory demo fallback ─────────────────────────────────────────
-certifi>=2024.0.0
-mongomock>=4.1.2
-
+# ── Optional: In-memory demo mode (when MONGO_URI is placeholder) ─────────────
+# mongomock>=4.1.2

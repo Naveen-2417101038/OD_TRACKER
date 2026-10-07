@@ -3,12 +3,8 @@ import sys
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-# Ensure project root and backend directory are present in sys.path
-_base_dir = os.path.abspath(os.path.dirname(__file__))
-_root_dir = os.path.abspath(os.path.join(_base_dir, '..'))
-for _d in [_root_dir, _base_dir]:
-    if _d not in sys.path:
-        sys.path.insert(0, _d)
+# Ensure project root is present in sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 try:
     from backend.config import Config
@@ -20,16 +16,19 @@ try:
     from backend.routes.class_incharge import class_incharge_bp
     from backend.routes.hod import hod_bp
     from backend.routes.academic import academic_bp, get_student_academic_detail
-except ImportError:
-    from config import Config
-    from database.mongodb import init_db, MongoDB
-    from routes.health import health_bp
-    from routes.auth import auth_bp
-    from routes.od_requests import od_requests_bp
-    from routes.mentor import mentor_bp
-    from routes.class_incharge import class_incharge_bp
-    from routes.hod import hod_bp
-    from routes.academic import academic_bp, get_student_academic_detail
+except ImportError as e:
+    if "No module named 'backend'" in str(e):
+        from config import Config
+        from database.mongodb import init_db, MongoDB
+        from routes.health import health_bp
+        from routes.auth import auth_bp
+        from routes.od_requests import od_requests_bp
+        from routes.mentor import mentor_bp
+        from routes.class_incharge import class_incharge_bp
+        from routes.hod import hod_bp
+        from routes.academic import academic_bp, get_student_academic_detail
+    else:
+        raise
 
 def create_app(config_class=Config):
     """Application factory for OD Tracking System backend."""
@@ -55,6 +54,13 @@ def create_app(config_class=Config):
     # Initialize MongoDB Atlas Connection, Schema & Seed Initial Data
     with app.app_context():
         init_db()
+
+    # Initialize background 24-hour certificate deadline checker daemon
+    try:
+        from backend.services.deadline_service import init_deadline_checker
+    except ImportError:
+        from services.deadline_service import init_deadline_checker
+    init_deadline_checker(app, interval_seconds=30)
 
     # Register Route Blueprints
     app.register_blueprint(health_bp, url_prefix='/api')

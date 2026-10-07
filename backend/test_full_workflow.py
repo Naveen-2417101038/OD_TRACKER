@@ -230,23 +230,49 @@ def test_full_od_workflow():
         assert res.status_code == 200
         hod_approved = res.get_json()['request']
         print(f"  - HOD Final Result -> Status: {hod_approved['status']}, Current Stage: {hod_approved['currentStage']}")
-        assert hod_approved['status'] == 'Approved'
-        assert hod_approved['currentStage'] == 'Approved'
+        assert hod_approved['status'] == 'HOD Approved - Certificate Pending'
+        assert hod_approved['currentStage'] == 'Certificate Pending'
+        assert hod_approved['certificateStatus'] == 'Pending Upload'
 
         # 7. Student uploads certificate after approval
         print("\n[7] Student uploading event certificate:")
-        # Simulate multipart form upload
         import io
+        from datetime import datetime, timedelta
         fake_cert_file = (io.BytesIO(b"%PDF-1.4 Mock Certificate Content"), 'hackathon_certificate.pdf')
+
+        # Requirement 6: uploading before event ends is rejected
         res = client.post(
             f'/api/od-requests/{req_id}/certificate',
             data={'certificate': fake_cert_file},
             content_type='multipart/form-data',
             headers={'Authorization': f'Bearer {student_token}'}
         )
+        assert res.status_code == 400
+        assert 'available after the event ends' in res.get_json()['error']
+        print(f"  - Upload before event ends correctly blocked: {res.get_json()['error']}")
+
+        # Simulate event conclusion within the 24-hour window
+        from backend.database.mongodb import od_requests_collection
+        past_end = datetime.now() - timedelta(hours=1)
+        od_requests_collection().update_one(
+            {'id': req_id},
+            {'$set': {
+                'event_end_datetime': past_end.strftime('%Y-%m-%d %H:%M:%S'),
+                'certificate_deadline': (past_end + timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
+            }}
+        )
+
+        fake_cert_file_2 = (io.BytesIO(b"%PDF-1.4 Mock Certificate Content"), 'hackathon_certificate.pdf')
+        res = client.post(
+            f'/api/od-requests/{req_id}/certificate',
+            data={'certificate': fake_cert_file_2},
+            content_type='multipart/form-data',
+            headers={'Authorization': f'Bearer {student_token}'}
+        )
         assert res.status_code == 200
         cert_data = res.get_json()
-        print(f"  - Certificate Upload: OK (Status: {cert_data['request']['certificateStatus']}, URL: {cert_data['certificateUrl']})")
+        print(f"  - Certificate Upload: OK (Status: {cert_data['request']['certificateStatus']}, OD Status: {cert_data['request']['status']})")
+        assert cert_data['request']['status'] == 'Certificate Submitted'
         assert cert_data['request']['certificateStatus'] == 'Pending Verification'
 
         # 8. Faculty verifies certificate
@@ -258,7 +284,8 @@ def test_full_od_workflow():
         )
         assert res.status_code == 200
         verified_req = res.get_json()['request']
-        print(f"  - Verification Result: OK (Certificate Status: {verified_req['certificateStatus']})")
+        print(f"  - Verification Result: OK (Certificate Status: {verified_req['certificateStatus']}, OD Status: {verified_req['status']})")
+        assert verified_req['status'] == 'Approved'
         assert verified_req['certificateStatus'] == 'Verified'
 
         # 9. Check Audit History

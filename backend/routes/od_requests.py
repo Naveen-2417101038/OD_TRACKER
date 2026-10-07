@@ -1,14 +1,29 @@
 import os
+import sys
 import uuid
 from datetime import datetime
+
+# Ensure project root is in sys.path so 'backend.*' imports succeed in all environments
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 from werkzeug.utils import secure_filename
 from flask import Blueprint, request, jsonify, send_from_directory
-from backend.models.od_request import ODRequestModel
-from backend.models.od_history import ODHistoryModel
-from backend.models.approval import ApprovalModel
-from backend.models.certificate import CertificateModel
-from backend.routes.auth import login_required, role_required
-from backend.config import Config
+try:
+    from backend.models.od_request import ODRequestModel
+    from backend.models.od_history import ODHistoryModel
+    from backend.models.approval import ApprovalModel
+    from backend.models.certificate import CertificateModel
+    from backend.routes.auth import login_required, role_required, current_user
+    from backend.config import Config
+except ImportError:
+    from models.od_request import ODRequestModel
+    from models.od_history import ODHistoryModel
+    from models.approval import ApprovalModel
+    from models.certificate import CertificateModel
+    from routes.auth import login_required, role_required, current_user
+    from config import Config
 
 od_requests_bp = Blueprint('od_requests', __name__)
 
@@ -35,7 +50,7 @@ def create_od_request():
     3. Safely save uploaded OD letter / brochure
     4. Store record in MongoDB Atlas od_requests collection with status 'Pending'
     """
-    current_user = request.current_user
+    active_user = current_user
 
     # Handle both multipart/form-data and JSON
     if request.is_json:
@@ -84,7 +99,7 @@ def create_od_request():
 
     # 3. Date Validation
     try:
-        d_from = datetime.strptime(from_date, "%Y-%m-%d")
+        d_from = datetime.strptime(from_date, "%Y-%m-%d").date()
     except ValueError:
         return jsonify({
             'success': False,
@@ -92,7 +107,7 @@ def create_od_request():
         }), 400
 
     try:
-        d_to = datetime.strptime(to_date, "%Y-%m-%d")
+        d_to = datetime.strptime(to_date, "%Y-%m-%d").date()
     except ValueError:
         return jsonify({
             'success': False,
@@ -103,6 +118,20 @@ def create_od_request():
         return jsonify({
             'success': False,
             'error': "Event end date cannot be earlier than event start date."
+        }), 400
+
+    server_today = datetime.now().date()
+    if d_from < server_today:
+        return jsonify({
+            'success': False,
+            'error': "Cannot apply for OD for past dates. OD requests must be submitted at least 3 days before the event date."
+        }), 400
+
+    days_diff = (d_from - server_today).days
+    if days_diff < 3:
+        return jsonify({
+            'success': False,
+            'error': "OD requests must be submitted at least 3 days before the event date."
         }), 400
 
     # 4. Handle File Upload
@@ -116,7 +145,7 @@ def create_od_request():
 
         orig_name = secure_filename(uploaded_file.filename) or 'document.pdf'
         ext = orig_name.rsplit('.', 1)[1] if '.' in orig_name else 'pdf'
-        safe_filename = f"od_{datetime.now().strftime('%Y%m%d%H%M%S')}_{str(uuid.uuid4().hex[:8])}.{ext}"
+        safe_filename = f"od_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
         save_path = os.path.join(Config.OD_LETTERS_FOLDER, safe_filename)
         
         os.makedirs(Config.OD_LETTERS_FOLDER, exist_ok=True)
@@ -125,12 +154,12 @@ def create_od_request():
 
     # 5. Insert into MongoDB using Authenticated Student Profile
     req_payload = {
-        'student_id': current_user.get('id') or current_user.get('userId'),
-        'student_reg_no': current_user.get('identifier'),
-        'student_name': current_user.get('name'),
-        'department': current_user.get('department'),
-        'year': current_user.get('year') or 'III Year',
-        'section': current_user.get('section') or 'A',
+        'student_id': active_user.get('id') or active_user.get('userId'),
+        'student_reg_no': active_user.get('identifier'),
+        'student_name': active_user.get('name'),
+        'department': active_user.get('department'),
+        'year': active_user.get('year') or 'III Year',
+        'section': active_user.get('section') or 'A',
         'event_name': event_name,
         'event_type': matched_type,
         'event_organizer': event_organizer,
@@ -146,16 +175,28 @@ def create_od_request():
 
     try:
         created_req = ODRequestModel.create(req_payload)
+    except ValueError as ve:
+        return jsonify({
+            'success': False,
+            'error': str(ve)
+        }), 400
     except Exception as e:
         return jsonify({
             'success': False,
             'error': f"Failed to record OD request in database: {str(e)}"
         }), 500
 
+    if not created_req:
+        return jsonify({
+            'success': False,
+            'error': "Failed to record OD request in database."
+        }), 500
+
+    req_id = created_req.get('id', '')
     return jsonify({
         'success': True,
-        'message': f"OD Request submitted successfully with ID: {created_req['id']}.",
-        'requestId': created_req['id'],
+        'message': f"OD Request submitted successfully with ID: {req_id}.",
+        'requestId': req_id,
         'request': created_req
     }), 201
 
@@ -163,12 +204,12 @@ def create_od_request():
 @role_required('Student')
 def get_my_od_requests():
     """Retrieve all OD requests filed by the currently authenticated student from MongoDB."""
-    current_user = request.current_user
-    student_id = current_user.get('id') or current_user.get('identifier')
+    active_user = current_user
+    student_id = active_user.get('id') or active_user.get('identifier')
     
     requests_list = ODRequestModel.list_by_student(student_id)
-    if not requests_list and current_user.get('identifier'):
-        requests_list = ODRequestModel.list_by_student(current_user.get('identifier'))
+    if not requests_list and active_user.get('identifier'):
+        requests_list = ODRequestModel.list_by_student(active_user.get('identifier'))
 
     return jsonify({
         'success': True,
@@ -180,7 +221,7 @@ def get_my_od_requests():
 @login_required
 def get_od_request_by_id(request_id):
     """Retrieve details for a single OD request by ID with strict ownership validation."""
-    current_user = request.current_user
+    active_user = current_user
     req = ODRequestModel.get_by_id(request_id)
 
     if not req:
@@ -190,11 +231,11 @@ def get_od_request_by_id(request_id):
         }), 404
 
     # If the requester is a student, ensure they can only view their own requests
-    if current_user.get('role') == 'Student':
+    if active_user.get('role') == 'Student':
         req_student_id = str(req.get('student_id', '')).lower()
         req_student_reg = str(req.get('student_reg_no', '')).lower()
-        user_id = str(current_user.get('id', '')).lower()
-        user_reg = str(current_user.get('identifier', '')).lower()
+        user_id = str(active_user.get('id', '')).lower()
+        user_reg = str(active_user.get('identifier', '')).lower()
 
         if user_id != req_student_id and user_reg != req_student_reg and user_id != req_student_reg:
             return jsonify({
@@ -216,7 +257,7 @@ def upload_request_certificate(request_id):
     - Updates certificate status to 'Pending Verification'
     - Creates record in MongoDB certificates collection
     """
-    current_user = request.current_user
+    active_user = current_user
     uploaded_file = request.files.get('certificate') or request.files.get('file') or request.files.get('document')
 
     if not uploaded_file or not uploaded_file.filename:
@@ -230,14 +271,14 @@ def upload_request_certificate(request_id):
 
     orig_name = secure_filename(uploaded_file.filename) or 'certificate.pdf'
     ext = orig_name.rsplit('.', 1)[1] if '.' in orig_name else 'pdf'
-    safe_filename = f"cert_{datetime.now().strftime('%Y%m%d%H%M%S')}_{str(uuid.uuid4().hex[:8])}.{ext}"
+    safe_filename = f"cert_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
     save_path = os.path.join(Config.CERTIFICATES_FOLDER, safe_filename)
 
     os.makedirs(Config.CERTIFICATES_FOLDER, exist_ok=True)
     uploaded_file.save(save_path)
     cert_url = f"/api/od-requests/uploads/certificates/{safe_filename}"
 
-    updated_req, err = ODRequestModel.upload_certificate(request_id, current_user, cert_url)
+    updated_req, err = ODRequestModel.upload_certificate(request_id, active_user, cert_url)
     if err:
         return jsonify({'success': False, 'error': err}), 400
 

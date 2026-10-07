@@ -1,0 +1,8 @@
+python-interpreter-path = "C:/Users/ajayr/AppData/Local/Programs/Python/Python312/python.exe"
+
+search-path = [
+    ".",
+    "backend",
+    ".venv/Lib/site-packages",
+    "C:/Users/ajayr/AppData/Local/Programs/Python/Python312/Lib/site-packages"
+]

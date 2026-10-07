@@ -2,19 +2,38 @@
 SQLAlchemy ORM Models for the OD Tracking System.
 All MongoDB collections are replaced by these PostgreSQL tables.
 """
+import os
+import sys
 import uuid
-from datetime import datetime
-from sqlalchemy import (
-    Column, String, Float, Integer, Boolean, Text, DateTime,
-    ForeignKey, Enum, Index, UniqueConstraint
-)
-from sqlalchemy.orm import relationship
+from datetime import datetime, timezone
+try:
+    from sqlalchemy import (
+        Column, String, Float, Integer, Boolean, Text, DateTime,
+        ForeignKey, Enum, Index, UniqueConstraint
+    )
+    from sqlalchemy.orm import relationship
+    HAS_SQLALCHEMY = True
+except ImportError:
+    HAS_SQLALCHEMY = False
+    raise ImportError("SQLAlchemy is not installed in this Python environment.")
+
+
 import enum
+
+# Ensure project root is in sys.path
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 try:
     from backend.database.postgresql import Base
 except ImportError:
     from database.postgresql import Base
+
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 # ─── Enums ────────────────────────────────────────────────────────────────────
@@ -77,8 +96,8 @@ class User(Base):
     reset_token_expires = Column(DateTime, nullable=True)
     password_changed_at = Column(DateTime, nullable=True)
     last_login = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     # Relationships
     student_profile = relationship('Student', foreign_keys='Student.user_id', back_populates='user', uselist=False, cascade='all, delete-orphan')
@@ -111,9 +130,9 @@ class User(Base):
             'status': self.status,
             'email_verified': getattr(self, 'email_verified', True),
             'account_status': getattr(self, 'account_status', 'ACTIVE'),
-            'password_changed_at': self.password_changed_at.isoformat() if getattr(self, 'password_changed_at', None) else None,
-            'last_login': self.last_login.isoformat() if self.last_login else None,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'password_changed_at': self.password_changed_at.isoformat() if getattr(self, 'password_changed_at', None) is not None else None,
+            'last_login': self.last_login.isoformat() if self.last_login is not None else None,
+            'created_at': self.created_at.isoformat() if self.created_at is not None else None,
         }
 
 
@@ -132,8 +151,8 @@ class Student(Base):
     od_used_days = Column(Float, default=0.0)          # Total OD days consumed
     total_working_days = Column(Integer, default=0)
     cgpa = Column(Float)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     # Relationships
     user = relationship('User', foreign_keys=[user_id], back_populates='student_profile')
@@ -177,8 +196,8 @@ class Attendance(Base):
     attendance_percent = Column(Float, default=0.0)
     semester = Column(Integer)
     academic_year = Column(String(20))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     student = relationship('User', foreign_keys=[student_id], overlaps="attendance_records")
     subject = relationship('Subject', back_populates='attendance_records')
@@ -203,7 +222,7 @@ class CATMarks(Base):
     max_marks = Column(Float, default=50.0)
     semester = Column(Integer)
     academic_year = Column(String(20))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     student = relationship('User', foreign_keys=[student_id], overlaps="cat_marks_records")
     subject = relationship('Subject', back_populates='cat_marks_records')
@@ -220,7 +239,7 @@ class ODRequest(Base):
     __tablename__ = 'od_requests'
 
     id = Column(String(60), primary_key=True,
-                default=lambda: f"REQ_{datetime.utcnow().strftime('%Y%m%d')}_{uuid.uuid4().hex[:6].upper()}")
+                default=lambda: f"REQ_{datetime.now(timezone.utc).strftime('%Y%m%d')}_{uuid.uuid4().hex[:6].upper()}")
     student_id = Column(String(50), ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     student_reg_no = Column(String(50))
     student_name = Column(String(200))
@@ -250,14 +269,21 @@ class ODRequest(Base):
     rejection_reason = Column(Text)
     remarks = Column(Text)
 
+    # Event & Certificate Timestamps
+    event_start_datetime = Column(DateTime, nullable=True)
+    event_end_datetime = Column(DateTime, nullable=True)
+    hod_approved_at = Column(DateTime, nullable=True)
+    certificate_deadline = Column(DateTime, nullable=True)
+    certificate_submitted_at = Column(DateTime, nullable=True)
+
     # OD eligibility snapshot (at time of request)
     attendance_at_request = Column(Float)     # Overall attendance % when submitted
     od_used_at_request = Column(Float)        # OD days used before this request
     od_percentage_requested = Column(Float)   # This request's OD %
     max_od_allowed_percent = Column(Float)    # 10% of attendance at request time
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     # Relationships
     student = relationship('User', foreign_keys=[student_id], back_populates='od_requests')
@@ -286,7 +312,7 @@ class Approval(Base):
     reviewer_role = Column(String(50))
     action = Column(String(50))     # Approved / Rejected / Auto Rejected
     comments = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     od_request = relationship('ODRequest', back_populates='approvals')
     reviewer = relationship('User', back_populates='approvals')
@@ -306,13 +332,13 @@ class Certificate(Base):
     student_reg_no = Column(String(50))
     event_name = Column(String(300))
     certificate_file_url = Column(Text)
-    upload_date = Column(DateTime, default=datetime.utcnow)
+    upload_date = Column(DateTime, default=utc_now)
     status = Column(String(50), default='Pending Verification')
     verified_by_id = Column(String(50))
     verified_by_name = Column(String(200))
     verified_at = Column(DateTime)
     remarks = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     od_request = relationship('ODRequest', back_populates='certificates')
     student = relationship('User', foreign_keys=[student_id])
@@ -332,7 +358,7 @@ class Notification(Base):
     type = Column(String(20), default='info')    # info / success / warning / error
     read = Column(Boolean, default=False)
     related_request_id = Column(String(60))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     user = relationship('User', foreign_keys=[user_id], back_populates='notifications')
 
@@ -354,7 +380,7 @@ class ODHistory(Base):
     role = Column(String(50))
     stage = Column(String(100))
     remarks = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     od_request = relationship('ODRequest', back_populates='history')
 
@@ -375,7 +401,7 @@ class AuditLog(Base):
     entity_id = Column(String(100))
     description = Column(Text)
     ip_address = Column(String(50))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     user = relationship('User', back_populates='audit_logs')
 

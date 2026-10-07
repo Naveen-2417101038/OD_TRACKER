@@ -1,9 +1,14 @@
 import os
 from werkzeug.utils import secure_filename
 from flask import Blueprint, request, jsonify, send_from_directory
-from backend.models.od_request import ODRequestModel
-from backend.routes.auth import role_required
-from backend.config import Config
+try:
+    from backend.models.od_request import ODRequestModel
+    from backend.routes.auth import role_required, current_user
+    from backend.config import Config
+except ImportError:
+    from models.od_request import ODRequestModel
+    from routes.auth import role_required, current_user
+    from config import Config
 
 mentor_bp = Blueprint('mentor', __name__)
 
@@ -24,7 +29,7 @@ def get_mentor_od_requests():
     Retrieve all OD requests assigned to the authenticated mentor from MongoDB.
     Returns categorized lists (all, pending, reviewed/history, approved, rejected).
     """
-    mentor_user = request.current_user
+    mentor_user = current_user
     all_requests = ODRequestModel.list_for_mentor(mentor_user)
 
     pending_requests = [r for r in all_requests if r.get('status') == 'Pending' and r.get('currentStage') == 'Mentor']
@@ -62,7 +67,7 @@ def get_mentor_od_requests():
 @role_required('Mentor')
 def get_mentor_od_request_detail(request_id):
     """Retrieve full details of a specific OD request assigned to this mentor from MongoDB."""
-    mentor_user = request.current_user
+    mentor_user = current_user
     req = ODRequestModel.get_by_id(request_id)
 
     if not req:
@@ -92,7 +97,7 @@ def approve_od_request(request_id):
     - Advances stage to 'Class Incharge'
     - Logs decision in approvals and od_history collections
     """
-    mentor_user = request.current_user
+    mentor_user = current_user
     data = request.get_json(silent=True) or {}
     remarks = (data.get('remarks') or data.get('comments') or '').strip()
 
@@ -120,8 +125,8 @@ def approve_od_request(request_id):
         'success': True,
         'message': f"OD Request {request_id} has been successfully recommended and approved by Mentor.",
         'request': updated_req,
-        'status': updated_req.get('status'),
-        'currentStage': updated_req.get('currentStage')
+        'status': updated_req.get('status') if updated_req else None,
+        'currentStage': updated_req.get('currentStage') if updated_req else None
     }), 200
 
 @mentor_bp.route('/od-requests/<request_id>/reject', methods=['POST'])
@@ -134,7 +139,7 @@ def reject_od_request(request_id):
     - Updates status to 'Mentor Rejected' in MongoDB
     - Logs decision in approvals and od_history collections
     """
-    mentor_user = request.current_user
+    mentor_user = current_user
     data = request.get_json(silent=True) or {}
     reason = (data.get('reason') or data.get('remarks') or data.get('comments') or '').strip()
 
@@ -168,8 +173,8 @@ def reject_od_request(request_id):
         'success': True,
         'message': f"OD Request {request_id} has been rejected by Mentor.",
         'request': updated_req,
-        'status': updated_req.get('status'),
-        'rejectionReason': updated_req.get('rejectionReason')
+        'status': updated_req.get('status') if updated_req else None,
+        'rejectionReason': updated_req.get('rejectionReason') if updated_req else None
     }), 200
 
 @mentor_bp.route('/od-requests/<request_id>/verify-certificate', methods=['POST'])
@@ -179,7 +184,7 @@ def verify_student_certificate(request_id):
     Verify student participation certificate as Mentor/Faculty.
     Status can be 'Verified' or 'Rejected'.
     """
-    mentor_user = request.current_user
+    mentor_user = current_user
     data = request.get_json(silent=True) or {}
     status = (data.get('status') or 'Verified').strip()
     remarks = (data.get('remarks') or '').strip()
@@ -201,7 +206,7 @@ def view_mentor_od_letter(request_id):
     Securely download/view the uploaded OD letter for an assigned request.
     Prevents unauthorized access and directory traversal.
     """
-    mentor_user = request.current_user
+    mentor_user = current_user
     req = ODRequestModel.get_by_id(request_id)
 
     if not req:

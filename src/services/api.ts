@@ -1297,3 +1297,69 @@ export async function apiGetStudentAcademic(
     return { success: false, error: err.message || 'Network error fetching student academic details.' };
   }
 }
+
+/**
+ * Upload student OD participation certificate.
+ * Enforces:
+ * - Block if event has not ended yet
+ * - Block if 24-hour certificate window expired
+ */
+export async function apiUploadCertificate(
+  requestId: string,
+  file: File,
+  token?: string
+): Promise<{ success: boolean; message?: string; certificateUrl?: string; request?: any; error?: string }> {
+  try {
+    const formData = new FormData();
+    formData.append('certificate', file);
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/od-requests/${encodeURIComponent(requestId)}/certificate`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Failed to upload certificate.' };
+    }
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Network error uploading certificate.' };
+  }
+}
+
+/**
+ * Verify or decline uploaded OD certificate by Mentor / Faculty.
+ */
+export async function apiVerifyCertificate(
+  requestId: string,
+  status: 'Verified' | 'Rejected',
+  remarks?: string,
+  token?: string
+): Promise<{ success: boolean; message?: string; request?: any; error?: string }> {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/mentor/od-requests/${encodeURIComponent(requestId)}/verify-certificate`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ status, remarks: remarks || '' }),
+      credentials: 'include',
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Failed to verify certificate.' };
+    }
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Network error verifying certificate.' };
+  }
+}
