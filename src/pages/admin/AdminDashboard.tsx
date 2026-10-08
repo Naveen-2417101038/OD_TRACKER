@@ -194,10 +194,10 @@ export const AdminDashboard: React.FC = () => {
             </button>
             <Link
               to="/admin/reports"
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition-all shadow-lg shadow-amber-500/25"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black transition-all shadow-lg shadow-amber-500/25 shrink-0 whitespace-nowrap"
             >
-              <BarChart3 className="w-4 h-4" />
-              <span>Export Reports</span>
+              <BarChart3 className="w-4 h-4 shrink-0" />
+              <span className="whitespace-nowrap">Export Reports</span>
             </Link>
           </div>
         </div>
@@ -212,7 +212,7 @@ export const AdminDashboard: React.FC = () => {
           <span className="text-xs text-slate-400 font-semibold">Live Database Records</span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
           {statCards.map((card, idx) => {
             const Icon = card.icon;
             return (

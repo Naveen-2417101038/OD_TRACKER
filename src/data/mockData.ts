@@ -669,6 +669,31 @@ export const authenticateUser = (
     }
   }
 
+  // 3. Check Administrator match
+  const isAdminMatch = 
+    cleanId === 'ADMIN@RAJALAKSHMI.EDU.IN' ||
+    cleanId === 'ADMIN' ||
+    cleanId === 'ADM001' ||
+    cleanId.includes('ADMIN') ||
+    role === 'Admin';
+
+  if (isAdminMatch && (!role || role === 'Admin')) {
+    if (cleanPass === 'password123' || cleanPass.length >= 6) {
+      const session: AuthSession = {
+        userId: 'ADM001',
+        name: 'Super Administrator',
+        role: 'Admin',
+        email: 'admin@rajalakshmi.edu.in',
+        department: 'Institutional Governance',
+        avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=150&h=150&q=80',
+        token: `jwt_admin_${Date.now()}`,
+        loginTime: new Date().toISOString(),
+      };
+      setAuthSession(session);
+      return session;
+    }
+  }
+
   return null;
 };
 
@@ -686,6 +711,19 @@ export const switchPersona = (role: UserRole): AuthSession => {
       section: student.section,
       avatar: student.profilePhoto,
       token: `jwt_student_${Date.now()}`,
+      loginTime: new Date().toISOString(),
+    };
+    setAuthSession(session);
+    return session;
+  } else if (role === 'Admin') {
+    const session: AuthSession = {
+      userId: 'ADM001',
+      name: 'Super Administrator',
+      role: 'Admin',
+      email: 'admin@rajalakshmi.edu.in',
+      department: 'Institutional Governance',
+      avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=150&h=150&q=80',
+      token: `jwt_admin_${Date.now()}`,
       loginTime: new Date().toISOString(),
     };
     setAuthSession(session);

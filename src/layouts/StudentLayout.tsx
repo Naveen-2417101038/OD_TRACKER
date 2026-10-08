@@ -261,12 +261,13 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
               <button
                 type="button"
                 onClick={() => { setIsProfileOpen(!isProfileOpen); setIsNotifOpen(false); }}
-                className="flex items-center gap-2.5 p-1.5 hover:bg-slate-100 rounded-xl transition-colors text-left"
+                className="flex items-center gap-2.5 p-1.5 hover:bg-slate-100 rounded-xl transition-colors text-left cursor-pointer"
+                aria-label="User Profile"
               >
                 <img
                   src={student?.profilePhoto || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=150&h=150&q=80'}
                   alt={student?.name || 'Student'}
-                  className="w-9 h-9 rounded-xl object-cover border border-slate-200 shadow-xs"
+                  className="w-9 h-9 rounded-xl object-cover border border-slate-200 shadow-xs shrink-0"
                 />
                 <div className="hidden md:block text-left">
                   <p className="font-bold text-xs text-slate-900 leading-tight">{student?.name || 'Loading...'}</p>
@@ -275,19 +276,37 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
               </button>
 
               {isProfileOpen && (
-                <div className="absolute right-0 mt-2 w-60 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-slide-in">
-                  <div className="p-3.5 border-b border-slate-100 bg-slate-50/70">
-                    <p className="font-bold text-xs text-slate-900 leading-none">{student?.name}</p>
-                    <p className="text-[11px] text-slate-500 mt-1">{student?.email}</p>
-                    <span className="inline-block mt-2 px-2 py-0.5 text-[9px] font-bold text-primary-700 bg-primary-50 rounded-full border border-primary-100">
-                      {student?.department}
-                    </span>
+                <div className="absolute right-0 mt-2 w-64 max-w-[calc(100vw-1.5rem)] bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-slide-in">
+                  <div className="p-3.5 sm:p-4 border-b border-slate-100 bg-slate-50/70">
+                    <p className="font-bold text-xs text-slate-900 leading-tight truncate" title={student?.name}>
+                      {student?.name || 'Student'}
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-1 break-all leading-snug" title={student?.email}>
+                      {student?.email || 'student@rajalakshmi.edu.in'}
+                    </p>
+                    <div className="mt-2.5 flex items-center flex-wrap gap-1.5">
+                      {student?.department && (
+                        <span className="inline-flex items-center px-2 py-0.5 text-[9px] font-bold text-primary-700 bg-primary-50 rounded-full border border-primary-100 max-w-full">
+                          {student.department}
+                        </span>
+                      )}
+                      {student?.year && (
+                        <span className="inline-flex items-center px-2 py-0.5 text-[9px] font-bold text-slate-600 bg-slate-100 rounded-full border border-slate-200">
+                          Year {student.year}
+                        </span>
+                      )}
+                      {student?.section && (
+                        <span className="inline-flex items-center px-2 py-0.5 text-[9px] font-bold text-slate-600 bg-slate-100 rounded-full border border-slate-200">
+                          Sec {student.section}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="p-1.5 space-y-0.5">
                     <Link
                       to="/student/profile"
                       onClick={() => setIsProfileOpen(false)}
-                      className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-100"
+                      className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors"
                     >
                       <User className="w-3.5 h-3.5 text-slate-400" />
                       <span>My Profile</span>
@@ -297,7 +316,7 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
                     <button
                       type="button"
                       onClick={handleLogout}
-                      className="flex items-center gap-2 w-full px-3 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50"
+                      className="flex items-center gap-2.5 w-full px-3 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
                     >
                       <LogOut className="w-3.5 h-3.5 text-rose-500" />
                       <span>Logout</span>

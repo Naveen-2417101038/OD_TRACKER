@@ -1823,3 +1823,317 @@ export async function apiUpdateAdminSettings(settings: any, token?: string) {
     return { success: false, error: err.message || 'Failed to update settings.' };
   }
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CLASS INCHARGE: STUDENT MANAGEMENT MODULE APIS
+// ═════════════════════════════════════════════════════════════════════════════
+
+export async function apiCIListStudents(params?: Record<string, any>, token?: string) {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const url = new URL(`${API_BASE}/class-incharge/student-management/students`);
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') {
+          url.searchParams.set(k, String(v));
+        }
+      });
+    }
+
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed response' }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to fetch students roster.' };
+  }
+}
+
+export async function apiCICreateStudent(payload: any, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/class-incharge/student-management/students`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed response' }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to create student account.' };
+  }
+}
+
+export async function apiCIUpdateStudent(studentId: string, payload: any, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/class-incharge/student-management/students/${encodeURIComponent(studentId)}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed response' }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update student account.' };
+  }
+}
+
+export async function apiCIToggleStudentStatus(studentId: string, status: 'ACTIVE' | 'DISABLED', token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/class-incharge/student-management/students/${encodeURIComponent(studentId)}/status`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ status }),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed response' }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to change student status.' };
+  }
+}
+
+export async function apiCIResetStudentPassword(studentId: string, password?: string, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/class-incharge/student-management/students/${encodeURIComponent(studentId)}/reset-password`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ password: password || 'password123' }),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed response' }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to reset student password.' };
+  }
+}
+
+export async function apiCIGetStudentProfile(studentId: string, token?: string) {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/class-incharge/student-management/students/${encodeURIComponent(studentId)}/profile`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed response' }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to fetch student profile.' };
+  }
+}
+
+export async function apiCIPreviewStudentsUpload(file: File, token?: string) {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch(`${API_BASE}/class-incharge/student-management/students/preview-upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed response' }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to parse student Excel file.' };
+  }
+}
+
+export async function apiCIConfirmStudentsUpload(rows: any[], filename?: string, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/class-incharge/student-management/students/confirm-upload`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ rows, filename }),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed response' }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to confirm student import.' };
+  }
+}
+
+export async function apiCIPreviewAttendanceUpload(file: File, token?: string) {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch(`${API_BASE}/class-incharge/student-management/attendance/preview-upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed response' }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to parse attendance Excel file.' };
+  }
+}
+
+export async function apiCIConfirmAttendanceUpload(rows: any[], filename?: string, week_date?: string, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/class-incharge/student-management/attendance/confirm-upload`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ rows, filename, week_date }),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed response' }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update attendance.' };
+  }
+}
+
+export async function apiCIPreviewMarksUpload(file: File, token?: string) {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch(`${API_BASE}/class-incharge/student-management/marks/preview-upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed response' }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to parse marks Excel file.' };
+  }
+}
+
+export async function apiCIConfirmMarksUpload(rows: any[], filename?: string, token?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/class-incharge/student-management/marks/confirm-upload`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ rows, filename }),
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed response' }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update student marks.' };
+  }
+}
+
+export async function apiCIGetHistory(historyType: 'students' | 'attendance' | 'marks', limit = 50, token?: string) {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/class-incharge/student-management/history/${historyType}?limit=${limit}`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed response' }));
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to fetch upload history.' };
+  }
+}
+
+export function apiCIDownloadTemplate(templateType: 'students' | 'attendance' | 'marks', token?: string) {
+  const activeToken = resolveStoredToken(token);
+  const url = `${API_BASE}/class-incharge/student-management/templates/${templateType}`;
+  // Use fetch to handle authorization and trigger blob download
+  fetch(url, {
+    method: 'GET',
+    headers: activeToken ? { 'Authorization': `Bearer ${activeToken}` } : {},
+    credentials: 'include'
+  })
+    .then(async (res) => {
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const filenameMap: Record<string, string> = {
+        students: 'student_accounts_template.xlsx',
+        attendance: 'weekly_attendance_template.xlsx',
+        marks: 'student_cat_marks_template.xlsx'
+      };
+      const downloadName = filenameMap[templateType] || `${templateType}_template.xlsx`;
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = downloadName;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(blobUrl);
+      document.body.removeChild(a);
+    })
+    .catch((err) => {
+      console.error('Template download error:', err);
+      window.open(url, '_blank');
+    });
+}
+
+export async function apiCIExportFailedReport(failed_rows: any[], upload_type = 'Upload', token?: string) {
+  try {
+    const activeToken = resolveStoredToken(token);
+    const res = await fetch(`${API_BASE}/class-incharge/student-management/export-failed-report`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(activeToken ? { 'Authorization': `Bearer ${activeToken}` } : {})
+      },
+      body: JSON.stringify({ failed_rows, upload_type }),
+      credentials: 'include'
+    });
+    if (!res.ok) throw new Error('Failed to generate export file');
+    const blob = await res.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `failed_records_${upload_type.toLowerCase()}_report.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(blobUrl);
+    document.body.removeChild(a);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to download failed rows report.' };
+  }
+}

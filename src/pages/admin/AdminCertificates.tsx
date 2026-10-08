@@ -129,16 +129,16 @@ export const AdminCertificates: React.FC = () => {
       {/* Certificates Data Table */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full text-left text-xs min-w-[1050px]">
             <thead>
               <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
-                <th className="py-3 px-4">Student</th>
-                <th className="py-3 px-4">Event Details</th>
-                <th className="py-3 px-4">Submitted Date</th>
-                <th className="py-3 px-4">Verification Status</th>
-                <th className="py-3 px-4">Verified By</th>
-                <th className="py-3 px-4">Verification Date</th>
-                <th className="py-3 px-4 text-right">Inspect Document</th>
+                <th className="py-3.5 px-4 min-w-[150px] whitespace-nowrap">Student</th>
+                <th className="py-3.5 px-4 min-w-[240px]">Event Details</th>
+                <th className="py-3.5 px-4 min-w-[140px] whitespace-nowrap">Submitted Date</th>
+                <th className="py-3.5 px-4 min-w-[160px] whitespace-nowrap">Verification Status</th>
+                <th className="py-3.5 px-4 min-w-[140px] whitespace-nowrap">Verified By</th>
+                <th className="py-3.5 px-4 min-w-[140px] whitespace-nowrap">Verification Date</th>
+                <th className="py-3.5 px-4 min-w-[120px] text-right whitespace-nowrap">Inspect Document</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium">
@@ -158,22 +158,22 @@ export const AdminCertificates: React.FC = () => {
               ) : (
                 certificates.map((cert) => (
                   <tr key={cert.id || cert._id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3 px-4">
-                      <p className="font-bold text-slate-800">{cert.studentName}</p>
-                      <p className="text-[11px] font-mono text-slate-400">{cert.studentRegNo || cert.studentRegisterNo}</p>
+                    <td className="py-3.5 px-4 min-w-[150px]">
+                      <p className="font-bold text-slate-800 whitespace-nowrap">{cert.studentName}</p>
+                      <p className="text-[11px] font-mono text-slate-400 whitespace-nowrap">{cert.studentRegNo || cert.studentRegisterNo}</p>
                     </td>
-                    <td className="py-3 px-4">
-                      <p className="font-bold text-slate-700 max-w-[200px] truncate">{cert.eventName}</p>
-                      <p className="text-[10px] text-slate-400 truncate max-w-[200px]">{cert.certificateName || 'Proof PDF'}</p>
+                    <td className="py-3.5 px-4 min-w-[240px]">
+                      <p className="font-bold text-slate-700 leading-snug break-words">{cert.eventName}</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5 break-words">{cert.certificateName || 'Proof PDF'}</p>
                     </td>
-                    <td className="py-3 px-4 text-slate-600">
+                    <td className="py-3.5 px-4 text-slate-600 whitespace-nowrap min-w-[140px]">
                       {cert.uploadDate || cert.submittedAt || 'N/A'}
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3.5 px-4 min-w-[160px] whitespace-nowrap">
                       <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                        cert.status === 'Verified' ? 'bg-emerald-100 text-emerald-800' :
-                        cert.status === 'Pending Verification' ? 'bg-amber-100 text-amber-800' :
-                        'bg-rose-100 text-rose-800'
+                        cert.status === 'Verified' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
+                        cert.status === 'Pending Verification' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                        'bg-rose-100 text-rose-800 border border-rose-200'
                       }`}>
                         {cert.status === 'Verified' ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> :
                          cert.status === 'Pending Verification' ? <Clock className="w-3 h-3 text-amber-600" /> :
@@ -181,19 +181,19 @@ export const AdminCertificates: React.FC = () => {
                         {cert.status}
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-slate-600">
+                    <td className="py-3.5 px-4 text-slate-600 whitespace-nowrap min-w-[140px]">
                       {cert.verifiedBy || 'Pending Review'}
                     </td>
-                    <td className="py-3 px-4 text-slate-500 text-[11px]">
+                    <td className="py-3.5 px-4 text-slate-500 text-[11px] whitespace-nowrap min-w-[140px]">
                       {cert.verifiedDate || cert.verifiedAt || '—'}
                     </td>
-                    <td className="py-3 px-4 text-right">
+                    <td className="py-3.5 px-4 text-right min-w-[120px] whitespace-nowrap">
                       <button
                         type="button"
                         onClick={() => handleOpenPreview(cert)}
-                        className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-violet-600 hover:text-white text-slate-700 font-bold transition-all text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                        className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-violet-600 hover:text-white text-slate-700 font-bold transition-all text-[11px] inline-flex items-center gap-1 cursor-pointer whitespace-nowrap"
                       >
-                        <Eye className="w-3.5 h-3.5" />
+                        <Eye className="w-3.5 h-3.5 shrink-0" />
                         <span>View Certificate</span>
                       </button>
                     </td>

@@ -114,8 +114,11 @@ export interface ODRequest {
   studentName?: string;
   studentRegisterNo?: string;
   studentDepartment?: string;
+  department?: string;
   studentYear?: string;
+  year?: string;
   studentSection?: string;
+  section?: string;
   studentPhone?: string;
   studentEmail?: string;
   eventName: string;

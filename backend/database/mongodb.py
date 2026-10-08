@@ -192,6 +192,18 @@ def academic_upload_history_collection():
     db = get_db()
     return db['academic_upload_history'] if db is not None else None
 
+def student_imports_history_collection():
+    db = get_db()
+    return db['student_imports_history'] if db is not None else None
+
+def attendance_upload_history_collection():
+    db = get_db()
+    return db['attendance_upload_history'] if db is not None else None
+
+def marks_upload_history_collection():
+    db = get_db()
+    return db['marks_upload_history'] if db is not None else None
+
 def system_settings_collection():
     db = get_db()
     return db['system_settings'] if db is not None else None
