@@ -6,26 +6,35 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# ── Frontend build output ─────────────────────────────────────────────────────
+# ── Frontend build output & dependencies ─────────────────────────────────────
 node_modules/
+frontend/node_modules/
 dist/
+frontend/dist/
 dist-ssr/
+frontend/dist-ssr/
 *.local
+frontend/*.local
 
 # ── Environment variables & secrets ──────────────────────────────────────────
 .env
 .env.*
 !.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
 backend/.env
 backend/.env.*
 !backend/.env.example
 
 # ── Python virtual environment & cache ────────────────────────────────────────
 .venv/
+backend/.venv/
 venv/
 env/
 pycache/
 __pycache__/
+backend/**/__pycache__/
 *.py[cod]
 *$py.class
 *.pyc
@@ -52,7 +61,7 @@ MANIFEST
 # ── Local SQLite / test databases ────────────────────────────────────────────
 *.db
 *.sqlite3
-od_tracking.db
+backend/od_tracking.db
 
 # ── Uploaded files (runtime generated) ───────────────────────────────────────
 backend/uploads/od_letters/*
@@ -76,4 +85,4 @@ Thumbs.db
 *.tmp
 coverage/
 .nyc_output/
-
+scratch/
