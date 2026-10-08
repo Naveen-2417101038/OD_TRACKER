@@ -134,6 +134,21 @@ def create_od_request():
             'error': "OD requests must be submitted at least 3 days before the event date."
         }), 400
 
+    # Ensure dates do not exceed 1 academic year in advance (prevents impossible dates like 2222/2661)
+    if d_from.year > server_today.year + 1 or d_to.year > server_today.year + 1:
+        return jsonify({
+            'success': False,
+            'error': "Event date cannot be more than 1 academic year in advance."
+        }), 400
+
+    # Ensure duration does not exceed maximum allowable consecutive OD limit (30 days)
+    total_days = (d_to - d_from).days + 1
+    if total_days > 30:
+        return jsonify({
+            'success': False,
+            'error': "OD request duration cannot exceed 30 consecutive days."
+        }), 400
+
     # 4. Handle File Upload
     document_url = None
     if uploaded_file and uploaded_file.filename:

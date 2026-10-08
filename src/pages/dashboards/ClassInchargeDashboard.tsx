@@ -23,12 +23,13 @@ import { StatusBadge } from '../../components/StatusBadge';
 import { ODDetailModal } from '../../components/ODDetailModal';
 import { ApproveModal, RejectModal } from '../../components/ConfirmationModal';
 import { AcademicDataUpload } from '../../components/AcademicDataUpload';
+import { StudentManagement } from '../../components/class-incharge/StudentManagement';
 import { useToast } from '../../components/Toast';
 
 export const ClassInchargeDashboard: React.FC = () => {
   const { showToast } = useToast();
   const [faculty, setFaculty] = useState<Faculty>(getCurrentFaculty());
-  const [activeTab, setActiveTab] = useState<'pending' | 'students' | 'history' | 'upload'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'student-management' | 'history' | 'upload'>('pending');
   const [data, setData] = useState<{
     all: ODRequest[];
     pending: ODRequest[];
@@ -225,15 +226,18 @@ export const ClassInchargeDashboard: React.FC = () => {
 
             <button
               type="button"
-              onClick={() => setActiveTab('students')}
+              onClick={() => setActiveTab('student-management')}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                activeTab === 'students'
+                activeTab === 'student-management'
                   ? 'bg-teal-600 text-white shadow-md shadow-teal-200'
                   : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
               }`}
             >
               <Users className="w-3.5 h-3.5" />
-              <span>Class Students & Attendance ({students.length})</span>
+              <span>Student Management</span>
+              <span className="ml-1 px-1.5 py-0.2 bg-teal-100 text-teal-800 text-[10px] rounded-full font-extrabold">
+                New
+              </span>
             </button>
 
             <button
@@ -247,19 +251,6 @@ export const ClassInchargeDashboard: React.FC = () => {
             >
               <FileText className="w-3.5 h-3.5" />
               <span>OD History & Records ({data.all.length})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('upload')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                activeTab === 'upload'
-                  ? 'bg-teal-600 text-white shadow-md shadow-teal-200'
-                  : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
-              }`}
-            >
-              <Upload className="w-3.5 h-3.5" />
-              <span>Academic Data Upload</span>
             </button>
           </div>
 
@@ -374,86 +365,9 @@ export const ClassInchargeDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* Tab 2: Class Students Roster & Academic Marks */}
-        {activeTab === 'students' && (
-          <div className="bg-white rounded-3xl border border-slate-200/90 overflow-hidden shadow-xs">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h3 className="font-black text-base text-slate-900">Student Academic Details & Roster</h3>
-                <p className="text-xs text-slate-500 mt-0.5">Central database records of student CAT marks and verified attendance percentages.</p>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 text-slate-500 font-bold uppercase tracking-wider text-[10px] border-b border-slate-200">
-                  <tr>
-                    <th className="p-4">Register Number</th>
-                    <th className="p-4">Student Name</th>
-                    <th className="p-4 text-center">CAT 1</th>
-                    <th className="p-4 text-center">CAT 2</th>
-                    <th className="p-4 text-center">CAT 3</th>
-                    <th className="p-4 text-center">Attendance</th>
-                    <th className="p-4">Assigned Mentor</th>
-                    <th className="p-4 text-center">OD Eligibility</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-medium">
-                  {filteredStudents.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="p-8 text-center text-slate-400">
-                        Academic data not available yet. Upload class data using the "Academic Data Upload" tab.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredStudents.map((s) => (
-                      <tr key={s.registerNumber} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="p-4 font-bold text-teal-800">{s.registerNumber}</td>
-                        <td className="p-4 font-bold text-slate-900 flex items-center gap-2.5">
-                          <img 
-                            src={s.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&h=100&q=80'} 
-                            alt={s.name} 
-                            className="w-7 h-7 rounded-full object-cover border"
-                          />
-                          <span>{s.name}</span>
-                        </td>
-                        <td className="p-4 text-center font-bold text-slate-800">
-                          {s.cat1Average !== undefined && s.cat1Average !== null ? s.cat1Average : '—'}
-                        </td>
-                        <td className="p-4 text-center font-bold text-slate-800">
-                          {s.cat2Average !== undefined && s.cat2Average !== null ? s.cat2Average : '—'}
-                        </td>
-                        <td className="p-4 text-center font-bold text-slate-800">
-                          {s.cat3Average !== undefined && s.cat3Average !== null ? s.cat3Average : '—'}
-                        </td>
-                        <td className="p-4 text-center">
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-black ${
-                            s.attendancePercent >= 85 ? 'bg-emerald-100 text-emerald-800' :
-                            s.attendancePercent >= 75 ? 'bg-amber-100 text-amber-800' :
-                            'bg-rose-100 text-rose-800 animate-pulse'
-                          }`}>
-                            {s.attendancePercent != null ? `${s.attendancePercent}%` : '—'}
-                          </span>
-                        </td>
-                        <td className="p-4 text-indigo-700 font-bold">{s.mentorName || 'Dr. A. Rajesh'}</td>
-                        <td className="p-4 text-center">
-                          {s.attendancePercent >= 75 ? (
-                            <span className="text-emerald-600 font-bold text-xs flex items-center justify-center gap-1">
-                              <CheckCircle2 className="w-3.5 h-3.5" /> Eligible
-                            </span>
-                          ) : (
-                            <span className="text-rose-600 font-bold text-xs flex items-center justify-center gap-1">
-                              <AlertTriangle className="w-3.5 h-3.5" /> Shortage
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+        {/* Tab 2: Dedicated Student Management Module (Students, Attendance, Marks) */}
+        {activeTab === 'student-management' && (
+          <StudentManagement />
         )}
 
         {/* Tab 3: History */}

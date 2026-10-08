@@ -1033,9 +1033,44 @@ def get_admin_reports_summary():
 def export_admin_reports_excel():
     """
     Generate and stream an official, formatted Excel spreadsheet (.xlsx)
-    containing actual student and OD request data with filter parameters.
+    containing actual student and OD request data filtered by scope parameters.
     """
-    all_ods = [r for r in ODRequestModel.list_all() if isinstance(r, dict)]
+    all_raw_ods = [r for r in ODRequestModel.list_all() if isinstance(r, dict)]
+
+    # Query filter parameters
+    req_dept = (request.args.get('department') or '').strip()
+    req_status = (request.args.get('status') or '').strip()
+    req_from_date = (request.args.get('from_date') or request.args.get('fromDate') or '').strip()
+    req_to_date = (request.args.get('to_date') or request.args.get('toDate') or '').strip()
+
+    all_ods = []
+    for r in all_raw_ods:
+        dept_val = str(r.get('department') or r.get('studentDepartment') or r.get('student_dept') or '')
+        if req_dept and req_dept.lower() not in dept_val.lower() and dept_val.lower() not in req_dept.lower():
+            continue
+
+        st_val = str(r.get('status') or '')
+        if req_status:
+            if req_status == 'Pending':
+                if st_val not in ['Pending', 'Mentor Approved', 'Class Incharge Approved']:
+                    continue
+            elif req_status == 'Approved':
+                if not ('Approved' in st_val and 'Rejected' not in st_val):
+                    continue
+            elif req_status == 'Rejected':
+                if not ('Rejected' in st_val or 'Declined' in st_val):
+                    continue
+            elif req_status.lower() != st_val.lower():
+                continue
+
+        od_start = str(r.get('fromDate') or r.get('eventDate') or r.get('from_date') or '')[:10]
+        od_end = str(r.get('toDate') or r.get('fromDate') or r.get('eventDate') or r.get('to_date') or '')[:10]
+        if req_from_date and od_end and od_end < req_from_date:
+            continue
+        if req_to_date and od_start and od_start > req_to_date:
+            continue
+
+        all_ods.append(r)
 
     wb = openpyxl.Workbook()
     ws = wb.active

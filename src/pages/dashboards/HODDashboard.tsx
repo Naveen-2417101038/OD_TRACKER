@@ -819,17 +819,17 @@ export const HODDashboard: React.FC = () => {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-slate-700">
+                <table className="w-full text-left text-xs text-slate-700 min-w-[950px]">
                   <thead className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">
                     <tr>
-                      <th className="p-4">Req ID</th>
-                      <th className="p-4">Student</th>
-                      <th className="p-4">Event Details</th>
-                      <th className="p-4">Dates</th>
-                      <th className="p-4">Current Stage</th>
-                      <th className="p-4">OD Status</th>
-                      <th className="p-4">Certificate</th>
-                      <th className="p-4 text-right">Actions</th>
+                      <th className="p-4 whitespace-nowrap">Req ID</th>
+                      <th className="p-4 min-w-[130px] whitespace-nowrap">Student</th>
+                      <th className="p-4 min-w-[200px]">Event Details</th>
+                      <th className="p-4 min-w-[150px] whitespace-nowrap">Dates</th>
+                      <th className="p-4 min-w-[120px] whitespace-nowrap">Current Stage</th>
+                      <th className="p-4 min-w-[120px] whitespace-nowrap">OD Status</th>
+                      <th className="p-4 min-w-[120px] whitespace-nowrap">Certificate</th>
+                      <th className="p-4 text-right whitespace-nowrap">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">

@@ -149,7 +149,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 </button>
 
                 {isNotifOpen && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-slate-200 p-4 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-xl border border-slate-200 p-4 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
                     <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                       <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">System Alerts</h4>
                       <span className="text-[11px] font-medium text-slate-400">Live Status</span>
@@ -165,7 +165,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                       <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-100 flex items-start gap-2.5">
                         <Award className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
                         <div>
-                          <p className="text-xs font-semibold text-indigo-900">{pendingCertCount} Pending Certificate Verifications</p>
+                          <p className="text-xs font-semibold text-indigo-900 leading-snug">{pendingCertCount} Pending Certificate Verifications</p>
                           <p className="text-[11px] text-indigo-700">Certificates awaiting faculty mentor review.</p>
                         </div>
                       </div>
@@ -174,7 +174,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                       <Link 
                         to="/admin/od-requests" 
                         onClick={() => setIsNotifOpen(false)}
-                        className="text-xs font-bold text-amber-600 hover:text-amber-700"
+                        className="inline-flex items-center justify-center text-xs font-bold text-amber-600 hover:text-amber-700 whitespace-nowrap"
                       >
                         Inspect All Pipeline Requests →
                       </Link>
@@ -204,10 +204,10 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 </button>
 
                 {isProfileOpen && (
-                  <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 p-3 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="absolute right-0 mt-2 w-64 max-w-[calc(100vw-1.5rem)] bg-white rounded-2xl shadow-xl border border-slate-200 p-3 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
                     <div className="p-2.5 bg-slate-50 rounded-xl mb-2">
-                      <p className="text-xs font-bold text-slate-900">{session?.name || 'Super Administrator'}</p>
-                      <p className="text-[11px] text-slate-500 font-mono">{session?.email || 'admin@rajalakshmi.edu.in'}</p>
+                      <p className="text-xs font-bold text-slate-900 truncate">{session?.name || 'Super Administrator'}</p>
+                      <p className="text-[11px] text-slate-500 font-mono break-all leading-snug">{session?.email || 'admin@rajalakshmi.edu.in'}</p>
                       <span className="inline-block mt-1 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider rounded bg-amber-100 text-amber-800">
                         Admin Role
                       </span>
@@ -250,7 +250,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       </header>
 
       {/* Main Body Layout: Sidebar + Page Container */}
-      <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex gap-6">
+      <div className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col lg:flex-row gap-6">
         
         {/* Desktop Sidebar */}
         <aside className="hidden lg:block w-64 shrink-0">
@@ -366,7 +366,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         )}
 
         {/* Dynamic Page Content Outlet */}
-        <main className="flex-1 min-w-0">
+        <main className="flex-1 min-w-0 w-full">
           {children}
         </main>
 

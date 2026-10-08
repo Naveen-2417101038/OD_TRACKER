@@ -376,12 +376,12 @@ export const Login: React.FC = () => {
                     Select Role
                   </span>
                   <span className="text-[11px] text-slate-400 font-semibold">
-                    1 Unified Login for All Roles
+                    Unified Login for All Roles
                   </span>
                 </div>
 
-                {/* 5 Role Option Buttons */}
-                <div className="grid grid-cols-5 gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200/80">
+                {/* 4 Role Option Buttons */}
+                <div className="grid grid-cols-4 gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200/80 w-full">
                   {ROLE_OPTIONS.map((r) => {
                     const Icon = r.icon;
                     const isActive = selectedRole === r.role;
@@ -475,14 +475,14 @@ export const Login: React.FC = () => {
 
                 {/* Remember Me */}
                 <div className="flex items-center justify-between text-xs pt-0.5">
-                  <label className="flex items-center gap-2 text-slate-600 font-semibold cursor-pointer">
+                  <label className="flex items-center gap-2 text-slate-600 font-semibold cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={rememberMe}
                       onChange={(e) => setRememberMe(e.target.checked)}
-                      className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
+                      className="w-[18px] h-[18px] min-w-[18px] min-h-[18px] max-w-[18px] max-h-[18px] rounded border border-slate-300 accent-primary-600 text-primary-600 focus:ring-2 focus:ring-primary-500/20 cursor-pointer shrink-0"
                     />
-                    <span>Remember this session</span>
+                    <span className="text-xs text-slate-600 font-semibold leading-tight">Remember this session</span>
                   </label>
                   <span className="text-[11px] text-slate-400 font-medium">Automatic Role Redirection</span>
                 </div>

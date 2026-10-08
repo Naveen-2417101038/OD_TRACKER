@@ -368,11 +368,11 @@ export const FacultyLayout: React.FC<FacultyLayoutProps> = ({ children }) => {
               </button>
 
               {isProfileOpen && (
-                <div className="absolute right-0 mt-2 w-60 bg-white border border-slate-200 rounded-3xl shadow-xl z-50 overflow-hidden animate-slide-in p-1.5">
+                <div className="absolute right-0 mt-2 w-64 max-w-[calc(100vw-1.5rem)] bg-white border border-slate-200 rounded-3xl shadow-xl z-50 overflow-hidden animate-slide-in p-1.5">
                   <div className="p-3 border-b border-slate-100 bg-slate-50/50 rounded-2xl mb-1">
-                    <p className="font-bold text-xs text-slate-900">{faculty.name}</p>
-                    <p className="text-[11px] text-slate-500">{faculty.email}</p>
-                    <span className="inline-block mt-1 text-[9px] font-bold text-primary-700 bg-primary-50 px-2 py-0.5 rounded-full border border-primary-100">
+                    <p className="font-bold text-xs text-slate-900 truncate">{faculty.name}</p>
+                    <p className="text-[11px] text-slate-500 break-all leading-snug">{faculty.email}</p>
+                    <span className="inline-block mt-1 text-[9px] font-bold text-primary-700 bg-primary-50 px-2 py-0.5 rounded-full border border-primary-100 max-w-full">
                       {faculty.role} • {faculty.employee_id}
                     </span>
                   </div>

@@ -54,6 +54,15 @@ export const ApplyOD: React.FC = () => {
     return `${yyyy}-${mm}-${dd}`;
   };
 
+  const getMaxAllowedDate = () => {
+    const maxDate = new Date();
+    maxDate.setFullYear(maxDate.getFullYear() + 1);
+    const yyyy = maxDate.getFullYear();
+    const mm = String(maxDate.getMonth() + 1).padStart(2, '0');
+    const dd = String(maxDate.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
   const validate = () => {
     const newErrors: Record<string, string> = {};
     if (!formData.eventName.trim()) newErrors.eventName = 'Event / Program Name is required';
@@ -66,7 +75,7 @@ export const ApplyOD: React.FC = () => {
     if (!formData.toTime) newErrors.toTime = 'To Time is required';
     if (!formData.reason.trim()) newErrors.reason = 'Reason for OD is required';
 
-    // Requirement 1: 3-day advance submission rule
+    // Requirement 1: 3-day advance submission rule & 1-year future boundary
     if (formData.fromDate) {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -81,15 +90,22 @@ export const ApplyOD: React.FC = () => {
         newErrors.fromDate = 'Cannot apply for OD for past dates. OD requests must be submitted at least 3 days before the event date.';
       } else if (diffDays < 3) {
         newErrors.fromDate = 'OD requests must be submitted at least 3 days before the event date.';
+      } else if (y > today.getFullYear() + 1) {
+        newErrors.fromDate = 'Event date cannot be more than 1 academic year in advance.';
       }
     }
 
-    // Validate date range
+    // Validate date range and duration
     if (formData.fromDate && formData.toDate) {
       const dFrom = new Date(formData.fromDate);
       const dTo = new Date(formData.toDate);
       if (dTo < dFrom) {
         newErrors.toDate = 'Event end date cannot be earlier than start date';
+      } else {
+        const durationDays = Math.round((dTo.getTime() - dFrom.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        if (durationDays > 30) {
+          newErrors.toDate = 'OD request duration cannot exceed 30 consecutive days.';
+        }
       }
     }
     
@@ -389,6 +405,7 @@ export const ApplyOD: React.FC = () => {
                     type="date"
                     required
                     min={getMinAllowedDate()}
+                    max={getMaxAllowedDate()}
                     value={formData.fromDate}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -420,6 +437,7 @@ export const ApplyOD: React.FC = () => {
                     type="date"
                     required
                     min={formData.fromDate || getMinAllowedDate()}
+                    max={getMaxAllowedDate()}
                     value={formData.toDate}
                     onChange={(e) => setFormData({ ...formData, toDate: e.target.value })}
                     className={`w-full bg-slate-50 border rounded-xl py-2.5 pl-10 pr-3.5 text-xs md:text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all ${

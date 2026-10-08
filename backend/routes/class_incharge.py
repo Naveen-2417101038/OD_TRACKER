@@ -1,14 +1,65 @@
 import os
+import io
+import uuid
+import re
+from datetime import datetime
 from werkzeug.utils import secure_filename
-from flask import Blueprint, request, jsonify, send_from_directory
+from werkzeug.security import generate_password_hash
+from flask import Blueprint, request, jsonify, send_from_directory, send_file
 try:
     from backend.models.od_request import ODRequestModel
+    from backend.models.user import UserModel
     from backend.routes.auth import role_required, current_user
     from backend.config import Config
+    from backend.database.mongodb import (
+        users_collection,
+        academic_records_collection,
+        student_imports_history_collection,
+        attendance_upload_history_collection,
+        marks_upload_history_collection,
+        od_requests_collection
+    )
+    from backend.services.od_eligibility import calculate_od_eligibility
+    from backend.services.excel_ci_service import (
+        parse_tabular_file,
+        validate_and_preview_students,
+        import_students_confirmed,
+        validate_and_preview_attendance,
+        update_attendance_confirmed,
+        validate_and_preview_marks,
+        update_marks_confirmed,
+        generate_student_account_template,
+        generate_attendance_template,
+        generate_marks_template,
+        generate_failed_rows_report
+    )
 except ImportError:
     from models.od_request import ODRequestModel
+    from models.user import UserModel
     from routes.auth import role_required, current_user
     from config import Config
+    from database.mongodb import (
+        users_collection,
+        academic_records_collection,
+        student_imports_history_collection,
+        attendance_upload_history_collection,
+        marks_upload_history_collection,
+        od_requests_collection
+    )
+    from services.od_eligibility import calculate_od_eligibility
+    from services.excel_ci_service import (
+        parse_tabular_file,
+        validate_and_preview_students,
+        import_students_confirmed,
+        validate_and_preview_attendance,
+        update_attendance_confirmed,
+        validate_and_preview_marks,
+        update_marks_confirmed,
+        generate_student_account_template,
+        generate_attendance_template,
+        generate_marks_template,
+        generate_failed_rows_report
+    )
 
 class_incharge_bp = Blueprint('class_incharge', __name__)
 
@@ -216,3 +267,705 @@ def view_class_incharge_od_letter(request_id):
         return jsonify({'success': False, 'error': 'Attached OD letter file not found on server.'}), 404
 
     return send_from_directory(Config.OD_LETTERS_FOLDER, safe_filename)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STUDENT MANAGEMENT MODULE (Class Incharge Profile / Dashboard)
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ─── 1. SAMPLE TEMPLATE DOWNLOADS ─────────────────────────────────────────────
+
+@class_incharge_bp.route('/student-management/templates/<template_type>', methods=['GET'])
+@role_required('Class Incharge', 'Admin')
+def download_ci_template(template_type):
+    """Download official sample templates matching backend import schemas."""
+    try:
+        t_type = (template_type or '').lower().strip()
+        if t_type in ['students', 'student', 'accounts']:
+            stream = generate_student_account_template()
+            filename = 'student_accounts_template.xlsx'
+        elif t_type in ['attendance', 'weekly_attendance']:
+            stream = generate_attendance_template()
+            filename = 'weekly_attendance_template.xlsx'
+        elif t_type in ['marks', 'cat_marks']:
+            stream = generate_marks_template()
+            filename = 'student_cat_marks_template.xlsx'
+        else:
+            return jsonify({'success': False, 'error': f"Unknown template type '{template_type}'."}), 400
+
+        return send_file(
+            stream,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'error': f"Failed to generate template: {str(e)}"}), 500
+
+
+# ─── 2. STUDENT ACCOUNTS: LIST & SEARCH/FILTER ─────────────────────────────────
+
+@class_incharge_bp.route('/student-management/students', methods=['GET'])
+@role_required('Class Incharge', 'Admin')
+def list_students():
+    """
+    List students for the Class Incharge with multi-factor search and filtering:
+    - Search: Register No or Student Name
+    - Filter: Department, Class/Section, Year, Status (ACTIVE/DISABLED)
+    - Filter: Attendance thresholds, CGPA thresholds
+    """
+    ci_user = current_user
+    users_col = users_collection()
+    if users_col is None:
+        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
+
+    query = {'role': 'Student'}
+
+    # If not admin, scope by department if set
+    ci_role = (ci_user.get('role') or '').lower()
+    if ci_role != 'admin':
+        ci_dept = (ci_user.get('department') or '').strip()
+        if ci_dept:
+            query['department'] = {'$regex': f"^{re.escape(ci_dept)}$", '$options': 'i'}
+
+    # Filters
+    search = request.args.get('search', '').strip()
+    section = request.args.get('section', '').strip()
+    year = request.args.get('year', '').strip()
+    status = request.args.get('status', '').strip().upper()
+    dept = request.args.get('department', '').strip()
+
+    if dept and ci_role == 'admin':
+        query['department'] = {'$regex': f"^{re.escape(dept)}$", '$options': 'i'}
+    if section:
+        query['section'] = {'$regex': f"^{re.escape(section)}$", '$options': 'i'}
+    if year:
+        query['year'] = {'$regex': f"^{re.escape(year)}$", '$options': 'i'}
+    if status in ['ACTIVE', 'DISABLED', 'UNVERIFIED']:
+        query['account_status'] = status
+
+    if search:
+        esc_search = re.escape(search)
+        query['$or'] = [
+            {'identifier': {'$regex': esc_search, '$options': 'i'}},
+            {'name': {'$regex': esc_search, '$options': 'i'}},
+            {'email': {'$regex': esc_search, '$options': 'i'}}
+        ]
+
+    # Attendance and CGPA query bounds
+    try:
+        att_min = request.args.get('attendance_min')
+        att_max = request.args.get('attendance_max')
+        if att_min is not None or att_max is not None:
+            att_q = {}
+            if att_min is not None and att_min != '':
+                att_q['$gte'] = float(att_min)
+            if att_max is not None and att_max != '':
+                att_q['$lte'] = float(att_max)
+            if att_q:
+                query['attendance_percentage'] = att_q
+    except ValueError:
+        pass
+
+    try:
+        cgpa_min = request.args.get('cgpa_min')
+        cgpa_max = request.args.get('cgpa_max')
+        if cgpa_min is not None or cgpa_max is not None:
+            cgpa_q = {}
+            if cgpa_min is not None and cgpa_min != '':
+                cgpa_q['$gte'] = float(cgpa_min)
+            if cgpa_max is not None and cgpa_max != '':
+                cgpa_q['$lte'] = float(cgpa_max)
+            if cgpa_q:
+                query['cgpa'] = cgpa_q
+    except ValueError:
+        pass
+
+    students_cursor = users_col.find(query, {'password_hash': 0, 'password': 0}).sort('identifier', 1)
+    student_list = []
+    for s in students_cursor:
+        formatted = UserModel._format_doc(s)
+        student_list.append({
+            'id': formatted.get('id'),
+            'register_number': formatted.get('identifier') or formatted.get('id'),
+            'name': formatted.get('name'),
+            'email': formatted.get('email'),
+            'department': formatted.get('department'),
+            'section': formatted.get('section', 'A'),
+            'class': f"{formatted.get('department', '')} - {formatted.get('section', 'A')}",
+            'year': formatted.get('year', 'III Year'),
+            'phone': formatted.get('phone', ''),
+            'cgpa': formatted.get('cgpa') if formatted.get('cgpa') is not None else 0.0,
+            'attendance': formatted.get('attendance_percentage') if formatted.get('attendance_percentage') is not None else 0.0,
+            'cat1': formatted.get('cat1_marks'),
+            'cat2': formatted.get('cat2_marks'),
+            'cat3': formatted.get('cat3_marks'),
+            'status': formatted.get('account_status', 'ACTIVE'),
+            'avatar': formatted.get('avatar'),
+            'created_at': formatted.get('created_at')
+        })
+
+    return jsonify({
+        'success': True,
+        'count': len(student_list),
+        'students': student_list
+    }), 200
+
+
+# ─── 3. SINGLE STUDENT: CREATE, EDIT, STATUS, PASSWORD RESET & PROFILE ────────
+
+@class_incharge_bp.route('/student-management/students', methods=['POST'])
+@role_required('Class Incharge', 'Admin')
+def create_single_student():
+    """Create a single student account manually."""
+    ci_user = current_user
+    data = request.get_json(silent=True) or {}
+
+    reg_no = (data.get('register_number') or data.get('identifier') or '').strip().upper()
+    name = (data.get('name') or data.get('student_name') or '').strip()
+    email = (data.get('email') or '').strip().lower()
+    dept = (data.get('department') or ci_user.get('department') or 'Computer Science and Design').strip()
+    sec = (data.get('section') or ci_user.get('section') or 'A').strip().upper()
+    year = (data.get('year') or ci_user.get('year') or 'III Year').strip()
+    phone = (data.get('phone') or '').strip()
+    password = (data.get('password') or 'password123').strip()
+
+    if not reg_no:
+        return jsonify({'success': False, 'error': 'Register Number is required.'}), 400
+    if not name:
+        return jsonify({'success': False, 'error': 'Student Name is required.'}), 400
+    if not email:
+        return jsonify({'success': False, 'error': 'Email address is required.'}), 400
+    if '@' not in email or '.' not in email:
+        return jsonify({'success': False, 'error': 'Invalid email address format.'}), 400
+
+    try:
+        cgpa = float(data.get('cgpa', 0.0) or 0.0)
+    except ValueError:
+        return jsonify({'success': False, 'error': 'CGPA must be a valid number between 0 and 10.'}), 400
+
+    try:
+        att = float(data.get('attendance', 85.0) or 85.0)
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Attendance must be a valid number between 0 and 100.'}), 400
+
+    users_col = users_collection()
+    if users_col is None:
+        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
+
+    # Duplicate check
+    existing = users_col.find_one({'$or': [{'identifier': reg_no}, {'email': email}, {'id': reg_no}]})
+    if existing:
+        if (existing.get('identifier') or '').upper() == reg_no:
+            return jsonify({'success': False, 'error': f"Student with Register Number '{reg_no}' already exists in database."}), 409
+        if (existing.get('email') or '').lower() == email:
+            return jsonify({'success': False, 'error': f"Student with Email '{email}' already exists in database."}), 409
+        return jsonify({'success': False, 'error': 'Student account already exists.'}), 409
+
+    user_id = f"STUD_{uuid.uuid4().hex[:8].upper()}"
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    doc = {
+        'id': user_id,
+        'identifier': reg_no,
+        'name': name,
+        'email': email,
+        'role': 'Student',
+        'sub_role': 'Student',
+        'department': dept,
+        'year': year,
+        'section': sec,
+        'designation': 'Student',
+        'phone': phone,
+        'password_hash': generate_password_hash(password),
+        'avatar': f"https://api.dicebear.com/7.x/initials/svg?seed={name}&backgroundColor=0d9488",
+        'email_verified': True,
+        'account_status': 'ACTIVE',
+        'cgpa': cgpa,
+        'attendance_percentage': att,
+        'cat1_marks': None,
+        'cat2_marks': None,
+        'cat3_marks': None,
+        'created_at': now_str,
+        'updated_at': now_str
+    }
+    users_col.insert_one(doc)
+
+    acad_col = academic_records_collection()
+    if acad_col is not None:
+        acad_col.update_one(
+            {'register_number': reg_no},
+            {'$set': {
+                'id': f"ACAD_{user_id}",
+                'student_id': user_id,
+                'register_number': reg_no,
+                'student_name': name,
+                'department': dept,
+                'attendance_percentage': att,
+                'total_working_days': 120,
+                'updated_by': ci_user.get('id', 'CLASS_INCHARGE'),
+                'updated_by_name': ci_user.get('name', 'Class Incharge'),
+                'created_at': now_str,
+                'updated_at': now_str
+            }},
+            upsert=True
+        )
+
+    return jsonify({
+        'success': True,
+        'message': f"Student account for '{name}' ({reg_no}) created successfully.",
+        'student': UserModel.to_safe_dict(doc)
+    }), 201
+
+
+@class_incharge_bp.route('/student-management/students/<student_id>', methods=['PUT'])
+@role_required('Class Incharge', 'Admin')
+def update_student(student_id):
+    """Edit student academic and demographic details."""
+    ci_user = current_user
+    data = request.get_json(silent=True) or {}
+    users_col = users_collection()
+    if users_col is None:
+        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
+
+    target = users_col.find_one({'$or': [{'id': student_id}, {'identifier': student_id}]})
+    if not target:
+        return jsonify({'success': False, 'error': f"Student with ID '{student_id}' not found."}), 404
+
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    updates = {'updated_at': now_str}
+
+    if 'name' in data and data['name'].strip():
+        updates['name'] = data['name'].strip()
+    if 'phone' in data:
+        updates['phone'] = str(data['phone']).strip()
+    if 'department' in data and data['department'].strip():
+        updates['department'] = data['department'].strip()
+    if 'section' in data and data['section'].strip():
+        updates['section'] = data['section'].strip().upper()
+    if 'year' in data and data['year'].strip():
+        updates['year'] = data['year'].strip()
+
+    if 'cgpa' in data and data['cgpa'] is not None and str(data['cgpa']).strip() != '':
+        try:
+            updates['cgpa'] = float(data['cgpa'])
+        except ValueError:
+            return jsonify({'success': False, 'error': 'CGPA must be numeric.'}), 400
+
+    if 'attendance' in data and data['attendance'] is not None and str(data['attendance']).strip() != '':
+        try:
+            att_val = float(str(data['attendance']).replace('%', '').strip())
+            updates['attendance_percentage'] = att_val
+            updates['last_academic_update'] = now_str
+        except ValueError:
+            return jsonify({'success': False, 'error': 'Attendance must be numeric.'}), 400
+
+    if 'cat1' in data:
+        updates['cat1_marks'] = float(data['cat1']) if data['cat1'] is not None and str(data['cat1']).strip() != '' else None
+    if 'cat2' in data:
+        updates['cat2_marks'] = float(data['cat2']) if data['cat2'] is not None and str(data['cat2']).strip() != '' else None
+    if 'cat3' in data:
+        updates['cat3_marks'] = float(data['cat3']) if data['cat3'] is not None and str(data['cat3']).strip() != '' else None
+
+    users_col.update_one({'_id': target['_id']}, {'$set': updates})
+
+    # Sync academic_records
+    acad_col = academic_records_collection()
+    if acad_col is not None:
+        acad_sync = {
+            'updated_by': ci_user.get('id'),
+            'updated_by_name': ci_user.get('name'),
+            'updated_at': now_str
+        }
+        if 'name' in updates:
+            acad_sync['student_name'] = updates['name']
+        if 'attendance_percentage' in updates:
+            acad_sync['attendance_percentage'] = updates['attendance_percentage']
+        if 'cat1_marks' in updates:
+            acad_sync['cat1_marks'] = updates['cat1_marks']
+        if 'cat2_marks' in updates:
+            acad_sync['cat2_marks'] = updates['cat2_marks']
+        if 'cat3_marks' in updates:
+            acad_sync['cat3_marks'] = updates['cat3_marks']
+        acad_col.update_one({'register_number': target.get('identifier')}, {'$set': acad_sync})
+
+    updated_doc = users_col.find_one({'_id': target['_id']})
+    return jsonify({
+        'success': True,
+        'message': f"Student details for '{target.get('identifier')}' updated successfully.",
+        'student': UserModel.to_safe_dict(updated_doc)
+    }), 200
+
+
+@class_incharge_bp.route('/student-management/students/<student_id>/status', methods=['PATCH'])
+@role_required('Class Incharge', 'Admin')
+def toggle_student_status(student_id):
+    """Activate or deactivate student account."""
+    data = request.get_json(silent=True) or {}
+    new_status = data.get('status', '').strip().upper()
+    if new_status not in ['ACTIVE', 'DISABLED']:
+        return jsonify({'success': False, 'error': "Invalid status. Must be 'ACTIVE' or 'DISABLED'."}), 400
+
+    users_col = users_collection()
+    if users_col is None:
+        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
+
+    target = users_col.find_one({'$or': [{'id': student_id}, {'identifier': student_id}]})
+    if not target:
+        return jsonify({'success': False, 'error': 'Student not found.'}), 404
+
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    users_col.update_one(
+        {'_id': target['_id']},
+        {'$set': {'account_status': new_status, 'updated_at': now_str}}
+    )
+
+    return jsonify({
+        'success': True,
+        'message': f"Student account '{target.get('identifier')}' status set to {new_status}.",
+        'status': new_status
+    }), 200
+
+
+@class_incharge_bp.route('/student-management/students/<student_id>/reset-password', methods=['POST'])
+@role_required('Class Incharge', 'Admin')
+def reset_student_password(student_id):
+    """Reset a student's password to default 'password123' or custom password."""
+    data = request.get_json(silent=True) or {}
+    new_password = (data.get('password') or 'password123').strip()
+
+    if len(new_password) < 6:
+        return jsonify({'success': False, 'error': 'Password must be at least 6 characters long.'}), 400
+
+    users_col = users_collection()
+    if users_col is None:
+        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
+
+    target = users_col.find_one({'$or': [{'id': student_id}, {'identifier': student_id}]})
+    if not target:
+        return jsonify({'success': False, 'error': 'Student not found.'}), 404
+
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    pwd_hash = generate_password_hash(new_password)
+    users_col.update_one(
+        {'_id': target['_id']},
+        {'$set': {'password_hash': pwd_hash, 'password_changed_at': now_str, 'updated_at': now_str}}
+    )
+
+    return jsonify({
+        'success': True,
+        'message': f"Password for '{target.get('name')}' ({target.get('identifier')}) reset successfully."
+    }), 200
+
+
+@class_incharge_bp.route('/student-management/students/<student_id>/profile', methods=['GET'])
+@role_required('Class Incharge', 'Admin')
+def get_student_full_profile(student_id):
+    """
+    Retrieve complete academic and OD profile for View Profile modal:
+    - Basic demographics
+    - Academic marks & attendance
+    - OD statistics (total, approved, rejected, pending)
+    - OD requests history
+    - Sensitive password fields are never exposed.
+    """
+    users_col = users_collection()
+    acad_col = academic_records_collection()
+    od_col = od_requests_collection()
+
+    if users_col is None:
+        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
+
+    user_doc = users_col.find_one({'$or': [{'id': student_id}, {'identifier': student_id}]})
+    if not user_doc:
+        return jsonify({'success': False, 'error': 'Student not found.'}), 404
+
+    sid = user_doc.get('id')
+    reg_no = user_doc.get('identifier') or sid
+
+    # Academics
+    acad_doc = acad_col.find_one({'$or': [{'student_id': sid}, {'register_number': reg_no}]}) if acad_col is not None else None
+    att = acad_doc.get('attendance_percentage') if acad_doc else user_doc.get('attendance_percentage', 0.0)
+    c1 = acad_doc.get('cat1_marks') if acad_doc else user_doc.get('cat1_marks')
+    c2 = acad_doc.get('cat2_marks') if acad_doc else user_doc.get('cat2_marks')
+    c3 = acad_doc.get('cat3_marks') if acad_doc else user_doc.get('cat3_marks')
+    cgpa = user_doc.get('cgpa', 0.0)
+
+    # OD Eligibility
+    eligibility = calculate_od_eligibility(sid, requested_od_days=0.0)
+
+    # OD Requests history
+    od_requests = []
+    if od_col is not None:
+        cursor = od_col.find(
+            {'$or': [{'student_id': sid}, {'studentId': sid}, {'studentRegisterNo': reg_no}]},
+            {'_id': 0}
+        ).sort('created_at', -1)
+        od_requests = list(cursor)
+
+    total_od = len(od_requests)
+    approved_od = len([r for r in od_requests if 'Approved' in str(r.get('status', ''))])
+    rejected_od = len([r for r in od_requests if 'Rejected' in str(r.get('status', ''))])
+    pending_od = total_od - approved_od - rejected_od
+
+    profile_data = {
+        'basic_info': {
+            'id': sid,
+            'name': user_doc.get('name'),
+            'register_number': reg_no,
+            'email': user_doc.get('email'),
+            'department': user_doc.get('department'),
+            'section': user_doc.get('section', 'A'),
+            'class': f"{user_doc.get('department', '')} - {user_doc.get('section', 'A')}",
+            'year': user_doc.get('year', 'III Year'),
+            'phone': user_doc.get('phone', ''),
+            'avatar': user_doc.get('avatar'),
+            'status': user_doc.get('account_status', 'ACTIVE'),
+            'created_at': user_doc.get('created_at')
+        },
+        'academics': {
+            'cgpa': cgpa,
+            'attendance_percentage': att,
+            'cat1_marks': c1,
+            'cat2_marks': c2,
+            'cat3_marks': c3,
+            'last_updated': acad_doc.get('updated_at') if acad_doc else user_doc.get('updated_at'),
+            'eligibility': eligibility
+        },
+        'od_summary': {
+            'total_requests': total_od,
+            'approved_requests': approved_od,
+            'rejected_requests': rejected_od,
+            'pending_requests': pending_od,
+            'history': od_requests
+        }
+    }
+
+    return jsonify({
+        'success': True,
+        'profile': profile_data
+    }), 200
+
+
+# ─── 4. BULK STUDENT ACCOUNT CREATION VIA EXCEL/CSV ───────────────────────────
+
+@class_incharge_bp.route('/student-management/students/preview-upload', methods=['POST'])
+@role_required('Class Incharge', 'Admin')
+def preview_students_upload():
+    """
+    Parse Excel/CSV for bulk student account creation.
+    Performs duplicate detection:
+    - In-file duplicate Register Numbers & Emails
+    - Existing database Register Numbers & Emails
+    - Validates email syntax, CGPA, attendance ranges
+    Returns detailed summary and row-by-row status with failure reasons.
+    """
+    ci_user = current_user
+    file = request.files.get('file') or request.files.get('excel')
+    if not file or not file.filename:
+        return jsonify({'success': False, 'error': 'Please select an Excel or CSV file to upload.'}), 400
+
+    filename = secure_filename(file.filename) or 'students.xlsx'
+    rows, err = parse_tabular_file(file.stream, filename)
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+
+    preview = validate_and_preview_students(rows, ci_user)
+    if not preview.get('success'):
+        return jsonify(preview), 400
+
+    preview['filename'] = filename
+    return jsonify(preview), 200
+
+
+@class_incharge_bp.route('/student-management/students/confirm-upload', methods=['POST'])
+@role_required('Class Incharge', 'Admin')
+def confirm_students_upload():
+    """
+    Confirm and commit validated student rows into database.
+    Creates accounts in users collection, initial academic records,
+    and logs an audit trail in student_imports_history collection.
+    """
+    ci_user = current_user
+    data = request.get_json(silent=True) or {}
+    rows = data.get('rows') or []
+    filename = data.get('filename') or 'students_import.xlsx'
+
+    if not rows:
+        return jsonify({'success': False, 'error': 'No student rows provided for import.'}), 400
+
+    # Only process rows that have status 'valid'
+    valid_rows = [r for r in rows if r.get('status') == 'valid']
+    if not valid_rows:
+        return jsonify({'success': False, 'error': 'No valid records ready for import.'}), 400
+
+    result = import_students_confirmed(valid_rows, ci_user, filename)
+    return jsonify(result), (200 if result.get('success') else 400)
+
+
+# ─── 5. WEEKLY ATTENDANCE MANAGEMENT VIA EXCEL ────────────────────────────────
+
+@class_incharge_bp.route('/student-management/attendance/preview-upload', methods=['POST'])
+@role_required('Class Incharge', 'Admin')
+def preview_attendance_upload():
+    """
+    Parse weekly attendance Excel.
+    Matches student using Register Number as primary key.
+    Validates numeric percentage (0-100).
+    Returns preview summary with previous vs new attendance and error reasons.
+    """
+    ci_user = current_user
+    file = request.files.get('file') or request.files.get('excel')
+    if not file or not file.filename:
+        return jsonify({'success': False, 'error': 'Please select an attendance Excel or CSV file to upload.'}), 400
+
+    filename = secure_filename(file.filename) or 'weekly_attendance.xlsx'
+    rows, err = parse_tabular_file(file.stream, filename)
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+
+    preview = validate_and_preview_attendance(rows, ci_user)
+    if not preview.get('success'):
+        return jsonify(preview), 400
+
+    preview['filename'] = filename
+    return jsonify(preview), 200
+
+
+@class_incharge_bp.route('/student-management/attendance/confirm-upload', methods=['POST'])
+@role_required('Class Incharge', 'Admin')
+def confirm_attendance_upload():
+    """
+    Commit weekly attendance updates.
+    Updates attendance_percentage in both users and academic_records.
+    OD eligibility rules immediately reflect the new values.
+    Logs upload audit in attendance_upload_history collection.
+    """
+    ci_user = current_user
+    data = request.get_json(silent=True) or {}
+    rows = data.get('rows') or []
+    filename = data.get('filename') or 'weekly_attendance.xlsx'
+    week_date = data.get('week_date', '')
+
+    if not rows:
+        return jsonify({'success': False, 'error': 'No attendance rows provided for update.'}), 400
+
+    matched_rows = [r for r in rows if r.get('status') == 'matched']
+    if not matched_rows:
+        return jsonify({'success': False, 'error': 'No matched student records ready to update.'}), 400
+
+    result = update_attendance_confirmed(matched_rows, ci_user, filename, week_date=week_date)
+    return jsonify(result), (200 if result.get('success') else 400)
+
+
+# ─── 6. STUDENT CAT MARKS MANAGEMENT VIA EXCEL ────────────────────────────────
+
+@class_incharge_bp.route('/student-management/marks/preview-upload', methods=['POST'])
+@role_required('Class Incharge', 'Admin')
+def preview_marks_upload():
+    """
+    Parse CAT Marks Excel file.
+    Matches student using Register Number.
+    Validates CAT 1, CAT 2, CAT 3 scores (0-100).
+    Returns preview summary with previous vs new marks.
+    """
+    ci_user = current_user
+    file = request.files.get('file') or request.files.get('excel')
+    if not file or not file.filename:
+        return jsonify({'success': False, 'error': 'Please select a marks Excel or CSV file to upload.'}), 400
+
+    filename = secure_filename(file.filename) or 'student_marks.xlsx'
+    rows, err = parse_tabular_file(file.stream, filename)
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+
+    preview = validate_and_preview_marks(rows, ci_user)
+    if not preview.get('success'):
+        return jsonify(preview), 400
+
+    preview['filename'] = filename
+    return jsonify(preview), 200
+
+
+@class_incharge_bp.route('/student-management/marks/confirm-upload', methods=['POST'])
+@role_required('Class Incharge', 'Admin')
+def confirm_marks_upload():
+    """
+    Commit CAT marks updates.
+    Updates cat1_marks, cat2_marks, cat3_marks in users and academic_records.
+    Reflects instantly in Student Dashboard, CAT Marks, and Student Profile.
+    Logs audit trail in marks_upload_history collection.
+    """
+    ci_user = current_user
+    data = request.get_json(silent=True) or {}
+    rows = data.get('rows') or []
+    filename = data.get('filename') or 'student_marks.xlsx'
+
+    if not rows:
+        return jsonify({'success': False, 'error': 'No marks rows provided for update.'}), 400
+
+    matched_rows = [r for r in rows if r.get('status') == 'matched']
+    if not matched_rows:
+        return jsonify({'success': False, 'error': 'No matched student records ready to update.'}), 400
+
+    result = update_marks_confirmed(matched_rows, ci_user, filename)
+    return jsonify(result), (200 if result.get('success') else 400)
+
+
+# ─── 7. UPLOAD HISTORIES ──────────────────────────────────────────────────────
+
+@class_incharge_bp.route('/student-management/history/<history_type>', methods=['GET'])
+@role_required('Class Incharge', 'Admin')
+def get_ci_upload_history(history_type):
+    """Retrieve audit history logs for students, attendance, or marks uploads."""
+    h_type = (history_type or '').lower().strip()
+    limit = int(request.args.get('limit', 50))
+
+    if h_type in ['students', 'student']:
+        col = student_imports_history_collection()
+    elif h_type in ['attendance', 'weekly_attendance']:
+        col = attendance_upload_history_collection()
+    elif h_type in ['marks', 'cat_marks']:
+        col = marks_upload_history_collection()
+    else:
+        return jsonify({'success': False, 'error': f"Unknown history type '{history_type}'."}), 400
+
+    if col is None:
+        return jsonify({'success': True, 'history': []}), 200
+
+    cursor = col.find({}, {'_id': 0}).sort('created_at', -1).limit(limit)
+    history_items = list(cursor)
+
+    return jsonify({
+        'success': True,
+        'type': h_type,
+        'count': len(history_items),
+        'history': history_items
+    }), 200
+
+
+# ─── 8. EXPORT FAILED ROWS REPORT ─────────────────────────────────────────────
+
+@class_incharge_bp.route('/student-management/export-failed-report', methods=['POST'])
+@role_required('Class Incharge', 'Admin')
+def export_failed_report():
+    """Download an Excel report of failed rows containing row number and failure reason."""
+    try:
+        data = request.get_json(silent=True) or {}
+        failed_rows = data.get('failed_rows') or []
+        upload_type = data.get('upload_type') or 'Upload'
+
+        if not failed_rows:
+            return jsonify({'success': False, 'error': 'No failed rows provided for report generation.'}), 400
+
+        stream = generate_failed_rows_report(failed_rows, upload_type=upload_type)
+        filename = f"failed_records_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+        return send_file(
+            stream,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'error': f"Failed to generate report: {str(e)}"}), 500
