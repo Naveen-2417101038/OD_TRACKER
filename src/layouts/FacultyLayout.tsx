@@ -286,7 +286,7 @@ export const FacultyLayout: React.FC<FacultyLayoutProps> = ({ children }) => {
 
               {/* Notification Dropdown */}
               {isNotifOpen && (
-                <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white border border-slate-200 rounded-3xl shadow-2xl z-50 overflow-hidden animate-slide-in">
+                <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-96 min-w-[18rem] sm:min-w-[22rem] max-w-sm sm:max-w-md bg-white border border-slate-200 rounded-3xl shadow-2xl z-50 overflow-hidden animate-slide-in">
                   <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                     <div>
                       <h4 className="font-bold text-xs text-slate-800 uppercase tracking-wider">Faculty Notifications</h4>

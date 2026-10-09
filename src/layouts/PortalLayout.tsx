@@ -205,13 +205,13 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
           <div className="flex items-center gap-2.5 sm:gap-4">
             
             {/* System Status Tag */}
-            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Session Active</span>
+            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold whitespace-nowrap shrink-0">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+              <span>System Status: Active</span>
             </div>
 
             {/* Notifications Dropdown */}
-            <div className="relative" ref={notifRef}>
+            <div className="relative shrink-0" ref={notifRef}>
               <button
                 type="button"
                 onClick={() => setIsNotifOpen(!isNotifOpen)}
@@ -227,7 +227,7 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
               </button>
 
               {isNotifOpen && (
-                <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 md:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden z-50 animate-slide-in" style={{maxWidth:'24rem'}}>
+                <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 md:w-96 min-w-[18rem] sm:min-w-[22rem] max-w-sm sm:max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden z-50 animate-slide-in">
                   <div className="p-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                     <div className="flex items-center gap-2">
                       <Bell className="w-4 h-4 text-primary-600" />

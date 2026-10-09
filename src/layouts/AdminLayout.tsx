@@ -100,31 +100,31 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           <div className="flex items-center justify-between h-16">
             
             {/* Left: Mobile Toggle & Brand Identity */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <button
                 type="button"
                 onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                className="lg:hidden p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+                className="lg:hidden p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors shrink-0"
                 aria-label="Toggle navigation menu"
               >
                 {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
 
-              <Link to="/admin/dashboard" className="flex items-center gap-3 group">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-600 via-orange-600 to-amber-500 flex items-center justify-center text-white shadow-md shadow-amber-500/20 group-hover:scale-105 transition-transform">
+              <Link to="/admin/dashboard" className="flex items-center gap-3 group min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-600 via-orange-600 to-amber-500 flex items-center justify-center text-white shadow-md shadow-amber-500/20 group-hover:scale-105 transition-transform shrink-0">
                   <Landmark className="w-5 h-5" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-sm sm:text-base text-slate-900 tracking-tight">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                    <span className="font-extrabold text-sm sm:text-base text-slate-900 tracking-tight whitespace-nowrap truncate">
                       Rajalakshmi Engineering College
                     </span>
-                    <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200">
+                    <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200 shrink-0 whitespace-nowrap">
                       <ShieldCheck className="w-3 h-3 text-amber-600" />
                       Admin Portal
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-500 font-medium hidden sm:block">
+                  <p className="text-[11px] text-slate-500 font-medium hidden sm:block truncate">
                     OD Tracking System • System-Level Operations & Governance
                   </p>
                 </div>
@@ -132,7 +132,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
             </div>
 
             {/* Right: Notification & Admin Profile Dropdown */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 shrink-0">
               
               {/* Notifications Popover */}
               <div className="relative" ref={notifRef}>
@@ -149,24 +149,27 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 </button>
 
                 {isNotifOpen && (
-                  <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-xl border border-slate-200 p-4 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-96 min-w-[18rem] sm:min-w-[22rem] max-w-sm sm:max-w-md bg-white rounded-2xl shadow-xl border border-slate-200 p-4 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
                     <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                      <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">System Alerts</h4>
-                      <span className="text-[11px] font-medium text-slate-400">Live Status</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                        <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider whitespace-nowrap">System Status</h4>
+                      </div>
+                      <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full whitespace-nowrap">Live Alerts</span>
                     </div>
                     <div className="mt-3 space-y-2.5">
                       <div className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-100 flex items-start gap-2.5">
                         <FileSpreadsheet className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-xs font-semibold text-amber-900">{pendingODCount} Active OD Requests</p>
-                          <p className="text-[11px] text-amber-700">Currently traversing the Mentor → Incharge → HOD approval pipeline.</p>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-semibold text-amber-900 whitespace-nowrap">{pendingODCount} Active OD Requests</p>
+                          <p className="text-[11px] text-amber-700 leading-relaxed mt-0.5">Currently traversing the Mentor → Incharge → HOD approval pipeline.</p>
                         </div>
                       </div>
                       <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-100 flex items-start gap-2.5">
                         <Award className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-xs font-semibold text-indigo-900 leading-snug">{pendingCertCount} Pending Certificate Verifications</p>
-                          <p className="text-[11px] text-indigo-700">Certificates awaiting faculty mentor review.</p>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-semibold text-indigo-900 leading-snug whitespace-nowrap">{pendingCertCount} Pending Certificate Verifications</p>
+                          <p className="text-[11px] text-indigo-700 leading-relaxed mt-0.5">Certificates awaiting faculty mentor review.</p>
                         </div>
                       </div>
                     </div>
@@ -204,7 +207,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 </button>
 
                 {isProfileOpen && (
-                  <div className="absolute right-0 mt-2 w-64 max-w-[calc(100vw-1.5rem)] bg-white rounded-2xl shadow-xl border border-slate-200 p-3 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="absolute right-0 mt-2 w-64 sm:w-72 min-w-[16rem] max-w-[calc(100vw-1.5rem)] bg-white rounded-2xl shadow-xl border border-slate-200 p-3 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
                     <div className="p-2.5 bg-slate-50 rounded-xl mb-2">
                       <p className="text-xs font-bold text-slate-900 truncate">{session?.name || 'Super Administrator'}</p>
                       <p className="text-[11px] text-slate-500 font-mono break-all leading-snug">{session?.email || 'admin@rajalakshmi.edu.in'}</p>

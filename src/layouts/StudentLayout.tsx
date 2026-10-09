@@ -197,7 +197,7 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
               </button>
 
               {isNotifOpen && (
-                <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 md:w-96 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-slide-in" style={{maxWidth:'24rem'}}>
+                <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 md:w-96 min-w-[18rem] sm:min-w-[22rem] max-w-sm sm:max-w-md bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-slide-in">
                   <div className="p-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                     <span className="font-bold text-xs text-slate-800">Notifications ({unreadCount} new)</span>
                     {unreadCount > 0 && (
@@ -257,7 +257,7 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
             </div>
 
             {/* Profile Dropdown */}
-            <div className="relative" ref={profileRef}>
+            <div className="relative shrink-0" ref={profileRef}>
               <button
                 type="button"
                 onClick={() => { setIsProfileOpen(!isProfileOpen); setIsNotifOpen(false); }}
@@ -276,7 +276,7 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
               </button>
 
               {isProfileOpen && (
-                <div className="absolute right-0 mt-2 w-64 max-w-[calc(100vw-1.5rem)] bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-slide-in">
+                <div className="absolute right-0 mt-2 w-64 min-w-[16rem] max-w-[calc(100vw-1.5rem)] bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-slide-in">
                   <div className="p-3.5 sm:p-4 border-b border-slate-100 bg-slate-50/70">
                     <p className="font-bold text-xs text-slate-900 leading-tight truncate" title={student?.name}>
                       {student?.name || 'Student'}
