@@ -56,7 +56,11 @@ body {
 /* Prevent any element from causing horizontal page overflow */
 *, *::before, *::after {
   box-sizing: border-box;
+}
+
+img, video, canvas, svg {
   max-width: 100%;
+  height: auto;
 }
 
 /* Custom Scrollbar for modern dashboards */

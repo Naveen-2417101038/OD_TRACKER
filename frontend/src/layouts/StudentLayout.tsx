@@ -197,14 +197,14 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
               </button>
 
               {isNotifOpen && (
-                <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 md:w-96 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-slide-in" style={{maxWidth:'24rem'}}>
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-2rem)] bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-slide-in">
                   <div className="p-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                     <span className="font-bold text-xs text-slate-800">Notifications ({unreadCount} new)</span>
                     {unreadCount > 0 && (
                       <button 
                         type="button"
                         onClick={handleMarkAllRead}
-                        className="text-[10px] text-primary-600 hover:underline font-bold"
+                        className="text-[10px] text-primary-600 hover:underline font-bold cursor-pointer"
                       >
                         Mark all read
                       </button>
@@ -225,9 +225,9 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
                             notif.type === 'error' ? 'bg-rose-500' :
                             notif.type === 'warning' ? 'bg-amber-500' : 'bg-blue-500'
                           }`} />
-                          <div className="flex-1">
-                            <p className="text-slate-800 text-[11px] leading-relaxed">{notif.message}</p>
-                            <span className="text-[9px] text-slate-400 mt-1 block">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-slate-800 text-[11px] leading-relaxed break-words">{notif.message}</p>
+                            <span className="text-[9px] text-slate-400 mt-1 block font-medium">
                               {new Date(notif.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} &bull; {new Date(notif.timestamp).toLocaleDateString()}
                             </span>
                           </div>
@@ -235,7 +235,7 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
                             <button
                               type="button"
                               onClick={(e) => handleMarkAsRead(notif.id, e)}
-                              className="text-[10px] text-primary-600 hover:text-primary-800 font-bold self-start mt-0.5 ml-2"
+                              className="text-[10px] text-primary-600 hover:text-primary-800 font-bold self-start mt-0.5 ml-2 shrink-0 cursor-pointer"
                               title="Mark read"
                             >
                               Mark Read

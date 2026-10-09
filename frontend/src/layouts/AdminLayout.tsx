@@ -149,34 +149,34 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 </button>
 
                 {isNotifOpen && (
-                  <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-xl border border-slate-200 p-4 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-2xl border border-slate-200 p-4 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
                     <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                      <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">System Alerts</h4>
-                      <span className="text-[11px] font-medium text-slate-400">Live Status</span>
+                      <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">System Alerts</h4>
+                      <span className="text-[11px] font-semibold text-slate-400">Live Status</span>
                     </div>
                     <div className="mt-3 space-y-2.5">
-                      <div className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-100 flex items-start gap-2.5">
+                      <div className="p-3 rounded-xl bg-amber-50/90 border border-amber-200/80 flex items-start gap-3">
                         <FileSpreadsheet className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-xs font-semibold text-amber-900">{pendingODCount} Active OD Requests</p>
-                          <p className="text-[11px] text-amber-700">Currently traversing the Mentor → Incharge → HOD approval pipeline.</p>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-amber-950 leading-snug">{pendingODCount} Active OD Requests</p>
+                          <p className="text-[11px] text-amber-800/90 mt-0.5 leading-relaxed break-words">Currently traversing the Mentor → Incharge → HOD approval pipeline.</p>
                         </div>
                       </div>
-                      <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-100 flex items-start gap-2.5">
+                      <div className="p-3 rounded-xl bg-indigo-50/90 border border-indigo-200/80 flex items-start gap-3">
                         <Award className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-xs font-semibold text-indigo-900 leading-snug">{pendingCertCount} Pending Certificate Verifications</p>
-                          <p className="text-[11px] text-indigo-700">Certificates awaiting faculty mentor review.</p>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-indigo-950 leading-snug">{pendingCertCount} Pending Certificate Verifications</p>
+                          <p className="text-[11px] text-indigo-800/90 mt-0.5 leading-relaxed break-words">Certificates awaiting faculty mentor review.</p>
                         </div>
                       </div>
                     </div>
-                    <div className="mt-3 pt-2 border-t border-slate-100 text-center">
+                    <div className="mt-3.5 pt-2.5 border-t border-slate-100 text-center">
                       <Link 
                         to="/admin/od-requests" 
                         onClick={() => setIsNotifOpen(false)}
-                        className="inline-flex items-center justify-center text-xs font-bold text-amber-600 hover:text-amber-700 whitespace-nowrap"
+                        className="inline-flex items-center justify-center text-xs font-bold text-amber-600 hover:text-amber-700 transition-colors whitespace-nowrap"
                       >
-                        Inspect All Pipeline Requests →
+                        Inspect All Pipeline Requests &rarr;
                       </Link>
                     </div>
                   </div>

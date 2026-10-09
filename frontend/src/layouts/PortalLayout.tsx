@@ -181,23 +181,15 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
           
           {/* Institution & Portal Title */}
           <div className="flex items-center gap-3.5">
-            <Link to={location.pathname} className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-primary-950 to-primary-700 flex items-center justify-center text-white shadow-md shadow-primary-950/20">
-                <Landmark className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-black text-sm sm:text-base text-slate-900 tracking-tight">
-                    RAJALAKSHMI ENGINEERING COLLEGE
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider ${getRoleBadgeStyle(role)}`}>
-                    {role} Dashboard
-                  </span>
-                  <span className="text-[11px] text-slate-400 hidden sm:inline">&bull; OD Tracking ERP</span>
-                </div>
-              </div>
+            <Link to={getRoleLoginPath(role)} className="flex items-center gap-3 group" title="Return to Portal Homepage">
+              <img 
+                src="/rec_logo.png" 
+                alt="Rajalakshmi Engineering College" 
+                className="h-9 sm:h-10 w-auto object-contain group-hover:scale-102 transition-transform drop-shadow-xs" 
+              />
+              <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${getRoleBadgeStyle(role)} shrink-0`}>
+                {role} Portal
+              </span>
             </Link>
           </div>
 
@@ -227,7 +219,7 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
               </button>
 
               {isNotifOpen && (
-                <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 md:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden z-50 animate-slide-in" style={{maxWidth:'24rem'}}>
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden z-50 animate-slide-in">
                   <div className="p-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                     <div className="flex items-center gap-2">
                       <Bell className="w-4 h-4 text-primary-600" />
@@ -237,7 +229,7 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
                       <button
                         type="button"
                         onClick={handleMarkAllAsRead}
-                        className="text-[10px] font-bold text-primary-600 hover:text-primary-800"
+                        className="text-[10px] font-bold text-primary-600 hover:text-primary-800 transition-colors cursor-pointer"
                       >
                         Mark all as read
                       </button>
@@ -257,14 +249,14 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
                           className={`p-3 text-xs cursor-pointer transition-colors ${notif.read ? 'bg-white opacity-70 hover:opacity-100' : 'bg-primary-50/40 hover:bg-primary-50/80 font-semibold'}`}
                         >
                           <div className="flex items-start justify-between gap-2">
-                            <p className="text-slate-800 text-[11px] leading-relaxed">
+                            <p className="text-slate-800 text-[11px] leading-relaxed flex-1 min-w-0 break-words">
                               {notif.message}
                             </p>
                             {!notif.read && (
                               <span className="w-2 h-2 rounded-full bg-primary-600 shrink-0 mt-1" />
                             )}
                           </div>
-                          <span className="text-[9px] text-slate-400 block mt-1">
+                          <span className="text-[9px] text-slate-400 block mt-1 font-medium">
                             {new Date(notif.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} &bull; {new Date(notif.timestamp).toLocaleDateString()}
                           </span>
                         </div>

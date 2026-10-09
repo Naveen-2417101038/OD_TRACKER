@@ -286,7 +286,7 @@ export const FacultyLayout: React.FC<FacultyLayoutProps> = ({ children }) => {
 
               {/* Notification Dropdown */}
               {isNotifOpen && (
-                <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white border border-slate-200 rounded-3xl shadow-2xl z-50 overflow-hidden animate-slide-in">
+                <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-2rem)] bg-white border border-slate-200 rounded-3xl shadow-2xl z-50 overflow-hidden animate-slide-in">
                   <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                     <div>
                       <h4 className="font-bold text-xs text-slate-800 uppercase tracking-wider">Faculty Notifications</h4>
@@ -294,8 +294,9 @@ export const FacultyLayout: React.FC<FacultyLayoutProps> = ({ children }) => {
                     </div>
                     {unreadCount > 0 && (
                       <button 
+                        type="button"
                         onClick={handleMarkAllRead}
-                        className="text-xs text-primary-600 hover:underline font-bold"
+                        className="text-xs text-primary-600 hover:underline font-bold cursor-pointer"
                       >
                         Mark all read
                       </button>
@@ -320,15 +321,16 @@ export const FacultyLayout: React.FC<FacultyLayoutProps> = ({ children }) => {
                             notif.type === 'warning' ? 'bg-amber-500' : 'bg-blue-500'
                           }`} />
                           <div className="flex-1 min-w-0">
-                            <p className="text-slate-700 font-medium leading-normal">{notif.message}</p>
-                            <span className="text-[10px] text-slate-400 mt-1 block">
+                            <p className="text-slate-700 font-medium leading-relaxed break-words">{notif.message}</p>
+                            <span className="text-[10px] text-slate-400 mt-1 block font-medium">
                               {new Date(notif.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </span>
                           </div>
                           {!notif.read && (
                             <button
+                              type="button"
                               onClick={(e) => handleMarkAsRead(notif.id, e)}
-                              className="text-[10px] text-primary-600 hover:text-primary-800 font-bold self-start mt-0.5 ml-2 flex-shrink-0"
+                              className="text-[10px] text-primary-600 hover:text-primary-800 font-bold self-start mt-0.5 ml-2 flex-shrink-0 cursor-pointer"
                             >
                               Read
                             </button>
