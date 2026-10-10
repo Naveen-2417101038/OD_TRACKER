@@ -1,8 +1,15 @@
 # PostgreSQL Database Engine & Session Management
 import os
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, scoped_session, DeclarativeBase
-from sqlalchemy.pool import NullPool
+
+try:
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker, scoped_session, DeclarativeBase
+    from sqlalchemy.pool import NullPool
+    HAS_SQLALCHEMY = True
+except ImportError:
+    HAS_SQLALCHEMY = False
+    raise ImportError("SQLAlchemy is not installed in this Python environment.")
+
 
 try:
     from backend.config import Config
@@ -12,6 +19,7 @@ except ImportError:
 
 class Base(DeclarativeBase):
     pass
+
 
 
 class PostgreSQLDB:

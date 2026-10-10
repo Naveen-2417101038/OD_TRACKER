@@ -6,11 +6,18 @@ import os
 import sys
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import (
-    Column, String, Float, Integer, Boolean, Text, DateTime,
-    ForeignKey, Enum, Index, UniqueConstraint
-)
-from sqlalchemy.orm import relationship
+try:
+    from sqlalchemy import (
+        Column, String, Float, Integer, Boolean, Text, DateTime,
+        ForeignKey, Enum, Index, UniqueConstraint
+    )
+    from sqlalchemy.orm import relationship
+    HAS_SQLALCHEMY = True
+except ImportError:
+    HAS_SQLALCHEMY = False
+    raise ImportError("SQLAlchemy is not installed in this Python environment.")
+
+
 import enum
 
 # Ensure project root is in sys.path
@@ -18,7 +25,11 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from backend.database.postgresql import Base
+try:
+    from backend.database.postgresql import Base
+except ImportError:
+    from database.postgresql import Base
+
 
 
 def utc_now() -> datetime:

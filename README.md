@@ -4,204 +4,155 @@ A full-stack, enterprise-grade On-Duty (OD) Management and Academic Performance 
 
 ---
 
-## 🚀 Key Features
+## 📁 Project Directory Structure
 
-### 👨‍🎓 Student Portal
-- **Submit OD Requests:** Apply for Internal/External On-Duty requests with event details, dates, and documentation upload (OD letters).
-- **Track OD Status:** Real-time multi-stage approval tracking (Mentor ➔ Class Incharge ➔ HOD).
-- **Certificate Upload & Verification:** Upload event participation/completion certificates for approved ODs.
-- **Academic Performance & Attendance:** View semester CAT (Continuous Assessment Test) marks, subject-wise attendance percentages, and overall OD credit statistics.
-- **OD History:** Filter and view past OD applications with status badges and download options.
+The application is structured into two main independent directories: **`frontend`** (React + Vite SPA) and **`backend`** (Python Flask REST API + MongoDB Atlas).
 
-### 👨‍🏫 Faculty & Mentor Portal
-- **Mentor Review:** Review and initial sign-off on assigned mentees' OD applications.
-- **Class Incharge Review:** Comprehensive class-level OD approval workflow, student attendance validation, and CAT marks breakdown.
-- **Academic Monitoring:** View detailed academic performance profiles for assigned students before approving OD requests.
-
-### 🏛️ HOD (Head of Department) Portal
-- **Final OD Approval:** Department-wide OD request management with bulk approval/rejection capabilities.
-- **Certificate Verification:** Inspect and verify student event certificates submitted post-OD.
-- **Department Analytics & Reports:** View departmental attendance metrics and export official OD records to Excel (`.xlsx`).
+```text
+OD_TRACKER/
+├── frontend/                 # React 19 + TypeScript Frontend Single Page Application
+│   ├── public/               # Static assets & favicon
+│   ├── src/                  # Application source code
+│   │   ├── assets/           # UI Assets & images
+│   │   ├── components/       # Reusable React components (Navbar, Modals, Badges, Cards)
+│   │   ├── layouts/          # Layout wrappers
+│   │   ├── pages/            # View pages (Dashboards, OD Requests, CAT Marks, Attendance, etc.)
+│   │   ├── services/         # API services & HTTP client (`api.ts`)
+│   │   ├── types/            # TypeScript type declarations
+│   │   ├── App.tsx           # Main application entry point & router
+│   │   ├── main.tsx          # React DOM render entry
+│   │   └── index.css         # Styling system & Tailwind CSS v4 setup
+│   ├── index.html            # Vite HTML template
+│   ├── package.json          # Node dependencies and build scripts
+│   ├── tsconfig.json         # TypeScript configuration
+│   ├── vite.config.ts        # Vite configuration & dev proxy rules
+│   └── .env.example          # Frontend environment variables template
+│
+├── backend/                  # Python Flask REST API Backend
+│   ├── database/             # Database drivers (MongoDB Atlas / PostgreSQL) & seed scripts
+│   ├── models/               # Data schemas & domain business logic
+│   ├── routes/               # API route controllers (Auth, Mentor, Class Incharge, HOD, Academic, Admin)
+│   ├── services/             # Background services (Audit, Deadlines, Excel parsing/exports)
+│   ├── uploads/              # Runtime uploaded documents (OD letters, Certificates)
+│   ├── tests/                # Backend unit and integration test suites
+│   ├── app.py                # Main Flask application entry point
+│   ├── config.py             # Server configuration & environment variables loader
+│   ├── seed_od_data.py       # Database seeder script
+│   ├── requirements.txt      # Python dependencies list
+│   └── .env.example          # Backend environment variables template
+│
+├── .gitignore                # Global git ignore configuration
+├── CONVERSATION_SUMMARY.md   # Architectural & workflow summary
+└── README.md                 # Primary project documentation
+```
 
 ---
 
 ## 🛠️ Technology Stack
 
-- **Frontend:**
+- **Frontend (`/frontend`):**
   - **Framework:** React 19 + TypeScript
   - **Build Tool:** Vite 8
   - **Styling:** TailwindCSS v4 + Custom Modern UI CSS Tokens
   - **Icons:** Lucide React
   - **Routing:** React Router DOM v7
-- **Backend:**
+
+- **Backend (`/backend`):**
   - **Framework:** Python 3.10+ / Flask 3.0+
   - **CORS Management:** Flask-Cors
-  - **Export Engine:** openpyxl (Excel Report Generation)
-  - **Production Server:** Gunicorn WSGI Server
-- **Database:**
-  - **Database:** MongoDB Atlas (Cloud) / Local MongoDB instance
-  - **Driver:** PyMongo + dnspython (with automatic local fallback mode support)
+  - **Excel Engine:** openpyxl (Academic data import & HOD export)
+  - **WSGI Server:** Gunicorn (Production deployment)
+  - **Database:** MongoDB Atlas (Cloud) / Local MongoDB with PyMongo driver
 
 ---
 
-## 📁 Project Structure
+## 🚀 Local Development Setup
 
-```text
-OD_TRACKER/
-├── backend/                  # Python Flask REST API Backend
-│   ├── database/             # MongoDB database connection & initial seeders
-│   ├── models/               # Data schemas & business logic models
-│   ├── routes/               # API Endpoints (Auth, OD Requests, Mentor, Class Incharge, HOD, Academic)
-│   ├── services/             # Utility services (PDF parsing, file handling)
-│   ├── uploads/              # Runtime uploaded files (OD letters, Certificates)
-│   ├── app.py                # Main Flask application entry point
-│   ├── config.py             # Server configuration & environment variables loader
-│   ├── requirements.txt      # Python dependencies
-│   └── seed_od_data.py       # Initial database seeder script
-├── public/                   # Public static assets
-├── src/                      # React Frontend Source
-│   ├── assets/               # Branding assets & images
-│   ├── components/           # Reusable UI components (Navbar, Modals, Badges, Cards)
-│   ├── data/                 # Mock & fallback datasets
-│   ├── layouts/              # Main layout wrappers
-│   ├── pages/                # Views (Dashboard, ApplyOD, ODRequests, CATMarks, Attendance, etc.)
-│   ├── services/             # API client services & HTTP utilities
-│   ├── types/                # TypeScript interface & type definitions
-│   ├── App.tsx               # Primary React component & Router setup
-│   ├── index.css             # Design tokens & Global Tailwind utilities
-│   └── main.tsx              # React DOM render entry point
-├── .env.example              # Sample environment variables template
-├── .gitignore                # Git ignore configuration
-├── package.json              # Frontend npm dependencies & scripts
-├── vite.config.ts            # Vite bundler configuration
-└── README.md                 # Project documentation
+### 1. Backend Setup (`/backend`)
+
+```bash
+cd backend
+
+# Create & activate a Python virtual environment
+python -m venv .venv
+
+# On Windows (PowerShell):
+.venv\Scripts\Activate.ps1
+# On Linux/macOS:
+source .venv/bin/activate
+
+# Install backend dependencies
+pip install -r requirements.txt
+
+# Create your local environment file
+cp .env.example .env
+
+# Run backend test suite to verify connection and logic
+python test_auth.py
+python test_class_incharge.py
+
+# Start Flask Backend server (Runs on http://localhost:5000)
+python app.py
+```
+
+### 2. Frontend Setup (`/frontend`)
+
+```bash
+cd frontend
+
+# Install Node modules
+npm install
+
+# Create frontend environment template
+cp .env.example .env.local
+
+# Run Vite local dev server (Runs on http://localhost:5173)
+npm run dev
 ```
 
 ---
 
-## ⚙️ Setup and Installation
+## 📦 Production Deployment Guide
 
-### Prerequisites
-- **Node.js:** v18.0.0 or higher
-- **Python:** v3.10 or higher
-- **MongoDB:** Local MongoDB or MongoDB Atlas connection string
+### A. Frontend Deployment (Vercel / Netlify / Cloudflare Pages)
 
----
+1. Set the **Root Directory** in your deployment provider settings to: `frontend`
+2. Set the **Build Command** to: `npm run build`
+3. Set the **Output Directory** to: `dist`
+4. Set the **Environment Variable**:
+   - `VITE_API_BASE_URL`: `https://your-backend-domain.onrender.com` (Your deployed live backend API URL)
 
-### 1️⃣ Environment Variables Setup
+### B. Backend Deployment (Render / Railway / Heroku / AWS EC2 / Docker)
 
-1. Copy `.env.example` to `.env` in the root directory:
-   ```bash
-   cp .env.example .env
-   ```
-2. Configure the required environment variables inside `.env`:
-   ```env
-   # Database Connection
-   MONGO_URI=mongodb://127.0.0.1:27017/od_tracking
-   MONGO_DB_NAME=od_tracking
-
-   # Flask Secret Key
-   SECRET_KEY=your_secure_random_secret_key
-
-   # Server Settings
-   FLASK_ENV=development
-   PORT=5000
-   CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
-
-   # Frontend API Base URL (Leave empty in dev for Vite proxy)
-   VITE_API_BASE_URL=
-   ```
+1. Set the **Root Directory** in your deployment provider settings to: `backend`
+2. Set the **Build Command** to: `pip install -r requirements.txt`
+3. Set the **Start Command** to: `gunicorn app:app --bind 0.0.0.0:$PORT`
+4. Set the **Environment Variables**:
+   - `MONGO_URI`: `mongodb+srv://<username>:<password>@<cluster>.mongodb.net/`
+   - `MONGO_DB_NAME`: `od_tracking`
+   - `SECRET_KEY`: `<your-random-32-byte-hex-string>`
+   - `CORS_ORIGINS`: `https://your-frontend-app.vercel.app`
 
 ---
 
-### 2️⃣ Backend Setup (Python Flask)
+## 👥 Collaboration & Git Workflow
 
-1. Navigate to the `backend` directory (or use project root with virtualenv):
-   ```bash
-   # Create a virtual environment
-   python -m venv .venv
+### Adding Teammates to GitHub
+1. Open GitHub Repository: [https://github.com/Sharjin-Jino/OD_TRACKER](https://github.com/Sharjin-Jino/OD_TRACKER)
+2. Go to **Settings ➔ Collaborators ➔ Add people**.
+3. Invite team members by username or email.
 
-   # Activate virtual environment
-   # On Windows (PowerShell):
-   .venv\Scripts\Activate.ps1
-   # On Linux/macOS:
-   source .venv/bin/activate
+### Pushing Changes cleanly
+```bash
+# 1. Pull latest main changes
+git pull origin main
 
-   # Install dependencies
-   pip install -r backend/requirements.txt
-   ```
+# 2. Stage changes
+git add .
 
-2. Seed initial sample data (optional but recommended for development):
-   ```bash
-   python backend/seed_od_data.py
-   ```
+# 3. Commit with a meaningful description
+git commit -m "Organized codebase into frontend and backend directories for deployment"
 
-3. Start the backend server:
-   ```bash
-   python backend/app.py
-   ```
-   *The backend server will start on `http://localhost:5000`.*
-
----
-
-### 3️⃣ Frontend Setup (React + Vite)
-
-1. Install frontend dependencies:
-   ```bash
-   npm install
-   ```
-
-2. Start the Vite development server:
-   ```bash
-   npm run dev
-   ```
-   *The frontend application will run on `http://localhost:5173`.*
-
----
-
-## 🤝 Team Git & GitHub Collaboration Workflow
-
-To ensure smooth collaboration across all team members working on this project:
-
-### 🔄 Daily Workflow
-1. **Pull latest changes before starting work:**
-   ```bash
-   git checkout main
-   git pull origin main
-   ```
-
-2. **Create a Feature Branch for major changes:**
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-
-3. **Stage and Commit changes in small, logical chunks:**
-   ```bash
-   git add .
-   git commit -m "Add feature description"
-   ```
-
-4. **Push the Feature Branch to GitHub:**
-   ```bash
-   git push -u origin feature/your-feature-name
-   ```
-
-5. **Merge to Main:**
-   Create a Pull Request (PR) on GitHub to review and merge into `main`.
-
-6. **Quick Pushing directly to `main` (for minor updates):**
-   ```bash
-   git pull origin main
-   git add .
-   git commit -m "Describe your update"
-   git push origin main
-   ```
-
----
-
-## ⚠️ Important Collaboration Rules
-
-- 🛑 **NEVER force push to main:** Do NOT use `git push --force` or `git reset --hard` on shared branches.
-- 🔒 **NEVER commit secrets:** Do not commit `.env`, passwords, secret keys, or DB credentials. Keep secrets strictly in `.env`.
-- 📁 **NEVER commit runtime user uploads:** Uploaded PDF letters or certificates in `backend/uploads/` are ignored by Git. Keep `.gitkeep` files intact.
-- 🔄 **Always pull before pushing:** Always pull the latest `main` branch before starting new work or pushing changes to avoid merge conflicts.
+# 4. Push changes to GitHub
+git push origin main
+```

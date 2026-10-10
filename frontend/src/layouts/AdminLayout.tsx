@@ -131,8 +131,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
             {/* Right: Change Password & Admin Profile Dropdown */}
             <div className="flex items-center gap-3 shrink-0">
-              
-              {/* Quick Change Password Button */}
+                            {/* Quick Change Password Button */}
               <button
                 type="button"
                 onClick={() => setIsChangePasswordOpen(true)}

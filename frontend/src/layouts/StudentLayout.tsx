@@ -150,6 +150,7 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
               <span>All Dashboards Hub</span>
             </Link>
 
+
             {/* Profile Dropdown */}
             <div className="relative shrink-0" ref={profileRef}>
               <button

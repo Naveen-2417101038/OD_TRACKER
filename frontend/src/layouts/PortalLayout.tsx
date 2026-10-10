@@ -137,23 +137,15 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
           
           {/* Institution & Portal Title */}
           <div className="flex items-center gap-3.5">
-            <Link to={location.pathname} className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-primary-950 to-primary-700 flex items-center justify-center text-white shadow-md shadow-primary-950/20">
-                <Landmark className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-black text-sm sm:text-base text-slate-900 tracking-tight">
-                    RAJALAKSHMI ENGINEERING COLLEGE
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider ${getRoleBadgeStyle(role)}`}>
-                    {role} Dashboard
-                  </span>
-                  <span className="text-[11px] text-slate-400 hidden sm:inline">&bull; OD Tracking ERP</span>
-                </div>
-              </div>
+            <Link to={getRoleLoginPath(role)} className="flex items-center gap-3 group" title="Return to Portal Homepage">
+              <img 
+                src="/rec_logo.png" 
+                alt="Rajalakshmi Engineering College" 
+                className="h-9 sm:h-10 w-auto object-contain group-hover:scale-102 transition-transform drop-shadow-xs" 
+              />
+              <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${getRoleBadgeStyle(role)} shrink-0`}>
+                {role} Portal
+              </span>
             </Link>
           </div>
 
@@ -176,6 +168,7 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
               <KeyRound className="w-3.5 h-3.5 text-amber-600" />
               <span className="hidden sm:inline">Change Password</span>
             </button>
+
 
 
             {/* User Profile info */}
