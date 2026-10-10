@@ -521,18 +521,18 @@ export const AdminStudents: React.FC = () => {
                 </div>
               </div>
 
-              {isAddOpen && (
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Initial Password</label>
-                  <input
-                    type="password"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-800 focus:outline-none focus:border-amber-500"
-                    placeholder="Leave default (password123)"
-                  />
-                </div>
-              )}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  {isAddOpen ? 'Initial Password' : 'Change Password (Optional)'}
+                </label>
+                <input
+                  type="password"
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-800 focus:outline-none focus:border-amber-500"
+                  placeholder={isAddOpen ? "Leave default (password123)" : "Leave blank to keep unchanged (min 6 characters)"}
+                />
+              </div>
 
               <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
                 <button

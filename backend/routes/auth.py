@@ -88,9 +88,14 @@ def parse_auth_token(token):
                     return user_id, role
         except Exception:
             pass
-    # Support client session tokens like jwt_student_... or jwt_faculty_FAC001_...
-    if token.startswith('jwt_student'):
-        return '23CSD001', 'Student'
+    # Support client session tokens like jwt_student_<id>_... or jwt_faculty_<id>_...
+    if token.startswith('jwt_student_'):
+        parts = token.split('_')
+        if len(parts) >= 3:
+            stu_id = parts[2]
+            stu = UserModel.get_by_id(stu_id) or UserModel.get_by_identifier(stu_id)
+            if stu and stu.get('role') == 'Student':
+                return stu['id'], 'Student'
     if token.startswith('jwt_faculty_'):
         parts = token.split('_')
         if len(parts) >= 3:

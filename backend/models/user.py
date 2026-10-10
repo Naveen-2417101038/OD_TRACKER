@@ -528,18 +528,29 @@ class UserModel:
 
     @staticmethod
     def update_user(user_id, updates):
-        """Update user fields safely."""
+        """Update user fields safely and authoritatively in MongoDB."""
         col = users_collection()
         if col is None:
             return None
+
+        target = UserModel.get_by_id(user_id) or UserModel.get_by_identifier(user_id)
+        if not target:
+            return None
+
         clean_updates = dict(updates)
-        clean_updates.pop('password_hash', None)
         clean_updates.pop('_id', None)
         clean_updates.pop('id', None)
+
         if 'password' in clean_updates:
             pwd = clean_updates.pop('password')
-            if pwd:
-                clean_updates['password_hash'] = generate_password_hash(pwd)
+            if pwd and str(pwd).strip():
+                clean_updates['password_hash'] = generate_password_hash(str(pwd).strip())
+                clean_updates.pop('password', None)
+            else:
+                clean_updates.pop('password', None)
+
         clean_updates['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        col.update_one({"id": str(user_id)}, {"$set": clean_updates})
-        return UserModel.get_by_id(user_id)
+
+        query = {"_id": ObjectId(target['_id'])} if ObjectId.is_valid(target.get('_id', '')) else {"id": target.get('id')}
+        col.update_one(query, {"$set": clean_updates})
+        return UserModel.get_by_id(target.get('id')) or UserModel.get_by_identifier(clean_updates.get('identifier', target.get('identifier')))

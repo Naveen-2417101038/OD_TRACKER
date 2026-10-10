@@ -47,10 +47,10 @@ class AcademicRecordModel:
         return [AcademicRecordModel._format_doc(d) for d in cursor]
 
     @staticmethod
-    def upsert_academic_record(student_id, register_number, student_name, cat1, cat2, cat3, attendance, updated_by_id, updated_by_name):
+    def upsert_academic_record(student_id, register_number, student_name, cat1, cat2, cat3, attendance, updated_by_id, updated_by_name, cgpa=None):
         """
         Create or update a student's academic record.
-        Also syncs attendance and CAT marks directly into the student's User document.
+        Also syncs attendance, CAT marks, and CGPA directly into the student's User document.
         """
         acad_col = academic_records_collection()
         users_col = users_collection()
@@ -64,6 +64,7 @@ class AcademicRecordModel:
         c2 = float(cat2) if cat2 is not None and str(cat2).strip() != '' else None
         c3 = float(cat3) if cat3 is not None and str(cat3).strip() != '' else None
         att = float(attendance) if attendance is not None else 0.0
+        clean_cgpa = float(cgpa) if cgpa is not None and str(cgpa).strip() != '' else None
 
         existing = acad_col.find_one({"$or": [{"student_id": student_id}, {"register_number": register_number}]})
         doc_id = existing['id'] if existing else f"ACAD_{student_id}"
@@ -82,6 +83,8 @@ class AcademicRecordModel:
             'updated_by_name': updated_by_name,
             'updated_at': now_str
         }
+        if clean_cgpa is not None:
+            update_payload['cgpa'] = clean_cgpa
 
         if not existing:
             update_payload['created_at'] = now_str
@@ -91,16 +94,19 @@ class AcademicRecordModel:
 
         # Synchronize attendance and marks into the student user document
         if users_col is not None:
+            user_sync = {
+                "attendance_percentage": att,
+                "cat1_marks": c1,
+                "cat2_marks": c2,
+                "cat3_marks": c3,
+                "last_academic_update": now_str,
+                "updated_at": now_str
+            }
+            if clean_cgpa is not None:
+                user_sync["cgpa"] = clean_cgpa
             users_col.update_one(
                 {"$or": [{"id": student_id}, {"identifier": register_number}]},
-                {"$set": {
-                    "attendance_percentage": att,
-                    "cat1_marks": c1,
-                    "cat2_marks": c2,
-                    "cat3_marks": c3,
-                    "last_academic_update": now_str,
-                    "updated_at": now_str
-                }}
+                {"$set": user_sync}
             )
 
         return AcademicRecordModel.get_by_student_id(student_id)

@@ -25,7 +25,8 @@ from backend.database.mongodb import (
     od_requests_collection,
     certificates_collection,
     od_history_collection,
-    system_settings_collection
+    system_settings_collection,
+    academic_records_collection
 )
 from backend.config import Config
 
@@ -368,7 +369,10 @@ def create_admin_student():
 @admin_bp.route('/students/<student_id>', methods=['PUT'])
 @role_required('Admin')
 def update_admin_student(student_id):
-    """Update student profile details, assigned mentor, class incharge, etc."""
+    """
+    Authoritatively update student profile details, registered college email,
+    login credentials (register number / username / password), assigned mentor, and class incharge.
+    """
     data = request.get_json(silent=True) or {}
     user = UserModel.get_by_id(student_id) or UserModel.get_by_identifier(student_id)
     if not user:
@@ -376,7 +380,79 @@ def update_admin_student(student_id):
 
     target_id = user['id']
     updates = {}
-    for field in ['name', 'department', 'year', 'section', 'phone', 'mentor', 'mentor_id', 'class_incharge', 'class_incharge_id', 'account_status']:
+
+    # 1. Email Update & Strict Uniqueness Enforcement (Bug 2)
+    if 'email' in data and data['email'] is not None:
+        raw_email = str(data['email']).strip().lower()
+        if not raw_email:
+            return jsonify({'success': False, 'error': 'Email address cannot be empty.'}), 400
+
+        # Validate institutional domain
+        is_valid_college, norm_email = validate_college_email(raw_email)
+        if not is_valid_college:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid email address format. Student email must be an official @rajalakshmi.edu.in address.'
+            }), 400
+
+        # Enforce uniqueness across all user accounts
+        existing_with_email = UserModel.get_by_email(norm_email)
+        if existing_with_email and existing_with_email.get('id') != user.get('id'):
+            return jsonify({
+                'success': False,
+                'error': f"The email address '{norm_email}' is already registered to another user account ({existing_with_email.get('name')})."
+            }), 409
+
+        if norm_email != user.get('email'):
+            updates['email'] = norm_email
+
+    # 2. Identifier / Register Number / Username Update & Uniqueness (Bug 3)
+    raw_ident = data.get('identifier') or data.get('registerNumber') or data.get('register_number') or data.get('username')
+    if raw_ident is not None and str(raw_ident).strip():
+        new_ident = str(raw_ident).strip().upper()
+        curr_ident = (user.get('identifier') or '').upper()
+        if new_ident != curr_ident:
+            # Enforce identifier uniqueness
+            existing_with_ident = UserModel.get_by_identifier(new_ident)
+            if existing_with_ident and existing_with_ident.get('id') != user.get('id'):
+                return jsonify({
+                    'success': False,
+                    'error': f"The Register Number / Username '{new_ident}' is already taken by another user."
+                }), 409
+
+            updates['identifier'] = new_ident
+
+            # Synchronize historical related records across collections
+            old_ident = user.get('identifier')
+            if old_ident:
+                try:
+                    od_col = od_requests_collection()
+                    if od_col is not None:
+                        od_col.update_many({'student_reg_no': old_ident}, {'$set': {'student_reg_no': new_ident}})
+
+                    acad_col = academic_records_collection()
+                    if acad_col is not None:
+                        acad_col.update_many({'register_number': old_ident}, {'$set': {'register_number': new_ident}})
+
+                    cert_col = certificates_collection()
+                    if cert_col is not None:
+                        cert_col.update_many({'student_reg_no': old_ident}, {'$set': {'student_reg_no': new_ident}})
+                except Exception as sync_err:
+                    print(f"[!] Warning: Error cascading student identifier update: {sync_err}")
+
+    # 3. Password Update & Secure Hashing (Bug 3)
+    if 'password' in data and data['password'] is not None:
+        new_pwd = str(data['password']).strip()
+        if new_pwd:
+            if len(new_pwd) < 6:
+                return jsonify({
+                    'success': False,
+                    'error': 'Password must be at least 6 characters long.'
+                }), 400
+            updates['password'] = new_pwd
+
+    # 4. Standard Demographic & Academic Profile Fields (Bug 4)
+    for field in ['name', 'department', 'year', 'section', 'phone', 'mentor', 'mentor_id', 'class_incharge', 'class_incharge_id', 'account_status', 'cgpa', 'attendance_percentage']:
         if field in data and data[field] is not None:
             updates[field] = data[field]
 
@@ -387,16 +463,19 @@ def update_admin_student(student_id):
     if 'classIncharge' in data:
         updates['class_incharge'] = data['classIncharge']
 
-    if 'password' in data and str(data['password']).strip():
-        updates['password'] = str(data['password']).strip()
-
     updated = UserModel.update_user(target_id, updates)
-    _log_admin_action(current_user, 'STUDENT_UPDATED', f"Updated profile for student {target_id}", student_id=target_id)
+    if not updated:
+        return jsonify({'success': False, 'error': 'Failed to update student database record.'}), 500
 
+    curr = getattr(request, 'current_user', {}) or {}
+    _log_admin_action(curr, 'STUDENT_UPDATED', f"Updated profile for student {updated.get('identifier')} ({target_id})", student_id=target_id)
+
+    safe_student = UserModel.to_safe_dict(updated)
     return jsonify({
         'success': True,
-        'message': f"Student {target_id} updated successfully.",
-        'student': UserModel.to_safe_dict(updated)
+        'message': f"Student account for {updated.get('name')} ({updated.get('identifier')}) updated successfully.",
+        'student': safe_student,
+        'data': safe_student
     }), 200
 
 
@@ -429,6 +508,7 @@ def toggle_admin_user_status(user_id):
     }), 200
 
 
+@admin_bp.route('/students/<student_id>', methods=['GET'])
 @admin_bp.route('/students/<student_id>/details', methods=['GET'])
 @role_required('Admin')
 def get_admin_student_details(student_id):
@@ -593,7 +673,7 @@ def create_admin_faculty():
 @admin_bp.route('/faculty/<faculty_id>', methods=['PUT'])
 @role_required('Admin')
 def update_admin_faculty(faculty_id):
-    """Update faculty details, designation, assigned section, or role."""
+    """Update faculty details, email, employee ID, designation, assigned section, or role."""
     data = request.get_json(silent=True) or {}
     user = UserModel.get_by_id(faculty_id) or UserModel.get_by_identifier(faculty_id)
     if not user:
@@ -601,22 +681,57 @@ def update_admin_faculty(faculty_id):
 
     target_id = user['id']
     updates = {}
+
+    # 1. Email Update & Uniqueness
+    if 'email' in data and data['email'] is not None:
+        raw_email = str(data['email']).strip().lower()
+        if raw_email and raw_email != user.get('email'):
+            existing_with_email = UserModel.get_by_email(raw_email)
+            if existing_with_email and existing_with_email.get('id') != user.get('id'):
+                return jsonify({
+                    'success': False,
+                    'error': f"The email address '{raw_email}' is already registered to another user account."
+                }), 409
+            updates['email'] = raw_email
+
+    # 2. Identifier / Employee ID Update & Uniqueness
+    raw_ident = data.get('employee_id') or data.get('identifier') or data.get('faculty_id')
+    if raw_ident is not None and str(raw_ident).strip():
+        new_ident = str(raw_ident).strip().upper()
+        if new_ident != (user.get('identifier') or '').upper():
+            existing_with_ident = UserModel.get_by_identifier(new_ident)
+            if existing_with_ident and existing_with_ident.get('id') != user.get('id'):
+                return jsonify({
+                    'success': False,
+                    'error': f"The Employee ID '{new_ident}' is already taken by another user."
+                }), 409
+            updates['identifier'] = new_ident
+
+    # 3. Password
+    if 'password' in data and data['password'] is not None:
+        new_pwd = str(data['password']).strip()
+        if new_pwd:
+            if len(new_pwd) < 6:
+                return jsonify({'success': False, 'error': 'Password must be at least 6 characters long.'}), 400
+            updates['password'] = new_pwd
+
     for field in ['name', 'role', 'sub_role', 'department', 'designation', 'section', 'year', 'phone', 'account_status']:
         if field in data and data[field] is not None:
             updates[field] = data[field]
 
     if 'assigned_section' in data:
         updates['section'] = data['assigned_section']
-    if 'password' in data and str(data['password']).strip():
-        updates['password'] = str(data['password']).strip()
 
     updated = UserModel.update_user(target_id, updates)
-    _log_admin_action(current_user, 'FACULTY_UPDATED', f"Updated faculty profile for {target_id}", student_id=target_id)
+    curr = getattr(request, 'current_user', {}) or {}
+    _log_admin_action(curr, 'FACULTY_UPDATED', f"Updated faculty profile for {target_id}", student_id=target_id)
 
+    safe_fac = UserModel.to_safe_dict(updated)
     return jsonify({
         'success': True,
-        'message': f"Faculty member {target_id} updated successfully.",
-        'faculty': UserModel.to_safe_dict(updated)
+        'message': f"Faculty member {updated.get('name')} updated successfully.",
+        'faculty': safe_fac,
+        'data': safe_fac
     }), 200
 
 
@@ -810,6 +925,8 @@ def get_admin_academic_roster():
 
 
 @admin_bp.route('/academic/student/<student_id>', methods=['PUT'])
+@admin_bp.route('/students/academic/<student_id>', methods=['PUT'])
+@admin_bp.route('/students/<student_id>/academic', methods=['PUT'])
 @role_required('Admin')
 def update_admin_student_academic(student_id):
     """Directly update a student's attendance percentage, CAT marks, and CGPA."""
@@ -822,11 +939,33 @@ def update_admin_student_academic(student_id):
     target_reg = user.get('identifier') or target_id
     target_name = user.get('name') or 'Student'
 
-    cat1 = float(data.get('cat1_marks') or data.get('cat1') or 80.0)
-    cat2 = float(data.get('cat2_marks') or data.get('cat2') or 80.0)
-    cat3 = float(data.get('cat3_marks') or data.get('cat3') or 80.0)
-    attendance = float(data.get('attendance_percentage') or data.get('attendance') or 85.0)
-    cgpa = float(data.get('cgpa') or 8.5)
+    # Retrieve existing academic record to preserve current values when fields are not explicitly changed
+    acad = AcademicRecordModel.get_by_student_id(target_id) or AcademicRecordModel.get_by_register_number(target_reg)
+    existing_cat1 = acad.get('cat1_marks') if acad else user.get('cat1_marks', 80.0)
+    existing_cat2 = acad.get('cat2_marks') if acad else user.get('cat2_marks', 80.0)
+    existing_cat3 = acad.get('cat3_marks') if acad else user.get('cat3_marks', 80.0)
+    existing_att = acad.get('attendance_percentage') if acad else user.get('attendance_percentage', 85.0)
+    existing_cgpa = user.get('cgpa', 8.5)
+
+    def _parse_metric(val, default):
+        if val is not None and str(val).strip() != '':
+            try:
+                return float(str(val).replace('%', '').strip())
+            except ValueError:
+                return default
+        return default
+
+    c1_raw = data.get('cat1_marks') if 'cat1_marks' in data else data.get('cat1')
+    c2_raw = data.get('cat2_marks') if 'cat2_marks' in data else data.get('cat2')
+    c3_raw = data.get('cat3_marks') if 'cat3_marks' in data else data.get('cat3')
+    att_raw = data.get('attendance_percentage') if 'attendance_percentage' in data else (data.get('attendance') or data.get('attendancePercentage'))
+    cgpa_raw = data.get('cgpa')
+
+    cat1 = _parse_metric(c1_raw, existing_cat1)
+    cat2 = _parse_metric(c2_raw, existing_cat2)
+    cat3 = _parse_metric(c3_raw, existing_cat3)
+    attendance = _parse_metric(att_raw, existing_att)
+    cgpa = _parse_metric(cgpa_raw, existing_cgpa)
 
     curr = getattr(request, 'current_user', {}) or {}
     admin_id = str(curr.get('id') or curr.get('userId') or 'ADM001')
@@ -841,7 +980,8 @@ def update_admin_student_academic(student_id):
         cat3=cat3,
         attendance=attendance,
         updated_by_id=admin_id,
-        updated_by_name=admin_name
+        updated_by_name=admin_name,
+        cgpa=cgpa
     )
 
     # Synchronize CGPA into user document

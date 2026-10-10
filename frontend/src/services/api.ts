@@ -22,7 +22,9 @@ const API_BASE = _backendOrigin ? `${_backendOrigin}/api` : '/api';
 export function resolveStoredToken(token?: string): string | undefined {
   if (token && token.trim()) return token.trim();
   try {
-    const rawAuth = localStorage.getItem('od_auth_session') || localStorage.getItem('od_current_user');
+    const rawAuth = localStorage.getItem('od_track_auth_session_v2') || 
+                    localStorage.getItem('od_auth_session') || 
+                    localStorage.getItem('od_current_user');
     if (rawAuth) {
       const parsed = JSON.parse(rawAuth);
       if (parsed.token) return parsed.token;
