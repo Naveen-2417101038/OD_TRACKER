@@ -3,11 +3,12 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, GraduationCap, Users, FileSpreadsheet, 
   BookOpen, Award, BarChart3, History, Settings, 
-  Bell, LogOut, Menu, X, Landmark, ShieldCheck, ChevronRight
+  LogOut, Menu, X, Landmark, ShieldCheck, ChevronRight, KeyRound
 } from 'lucide-react';
 import { getAuthSession } from '../data/mockData';
 import { apiGetAdminStats } from '../services/api';
 import { useToast } from '../components/Toast';
+import { ChangePasswordModal } from '../components/ChangePasswordModal';
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -21,12 +22,11 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const [session, setSession] = useState(getAuthSession());
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [pendingODCount, setPendingODCount] = useState<number>(0);
   const [pendingCertCount, setPendingCertCount] = useState<number>(0);
 
   const profileRef = useRef<HTMLDivElement>(null);
-  const notifRef = useRef<HTMLDivElement>(null);
 
   // Sync session and stats
   useEffect(() => {
@@ -49,13 +49,11 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
         setIsProfileOpen(false);
       }
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
-        setIsNotifOpen(false);
-      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
 
   const handleLogout = () => {
     try {
@@ -131,60 +129,19 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
               </Link>
             </div>
 
-            {/* Right: Notification & Admin Profile Dropdown */}
+            {/* Right: Change Password & Admin Profile Dropdown */}
             <div className="flex items-center gap-3 shrink-0">
               
-              {/* Notifications Popover */}
-              <div className="relative" ref={notifRef}>
-                <button
-                  type="button"
-                  onClick={() => setIsNotifOpen(!isNotifOpen)}
-                  className="relative p-2.5 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
-                  aria-label="Notifications"
-                >
-                  <Bell className="w-5 h-5" />
-                  {(pendingODCount > 0 || pendingCertCount > 0) && (
-                    <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white" />
-                  )}
-                </button>
-
-                {isNotifOpen && (
-                  <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-96 min-w-[18rem] sm:min-w-[22rem] max-w-sm sm:max-w-md bg-white rounded-2xl shadow-xl border border-slate-200 p-4 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
-                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                        <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider whitespace-nowrap">System Status</h4>
-                      </div>
-                      <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full whitespace-nowrap">Live Alerts</span>
-                    </div>
-                    <div className="mt-3 space-y-2.5">
-                      <div className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-100 flex items-start gap-2.5">
-                        <FileSpreadsheet className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-semibold text-amber-900 whitespace-nowrap">{pendingODCount} Active OD Requests</p>
-                          <p className="text-[11px] text-amber-700 leading-relaxed mt-0.5">Currently traversing the Mentor → Incharge → HOD approval pipeline.</p>
-                        </div>
-                      </div>
-                      <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-100 flex items-start gap-2.5">
-                        <Award className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-semibold text-indigo-900 leading-snug whitespace-nowrap">{pendingCertCount} Pending Certificate Verifications</p>
-                          <p className="text-[11px] text-indigo-700 leading-relaxed mt-0.5">Certificates awaiting faculty mentor review.</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-3 pt-2 border-t border-slate-100 text-center">
-                      <Link 
-                        to="/admin/od-requests" 
-                        onClick={() => setIsNotifOpen(false)}
-                        className="inline-flex items-center justify-center text-xs font-bold text-amber-600 hover:text-amber-700 whitespace-nowrap"
-                      >
-                        Inspect All Pipeline Requests →
-                      </Link>
-                    </div>
-                  </div>
-                )}
-              </div>
+              {/* Quick Change Password Button */}
+              <button
+                type="button"
+                onClick={() => setIsChangePasswordOpen(true)}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors border border-slate-200"
+                title="Change Admin Password"
+              >
+                <KeyRound className="w-3.5 h-3.5 text-amber-600" />
+                <span>Change Password</span>
+              </button>
 
               {/* Profile Dropdown */}
               <div className="relative" ref={profileRef}>
@@ -225,6 +182,17 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                         <Settings className="w-4 h-4 text-slate-400" />
                         System Settings
                       </Link>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          setIsChangePasswordOpen(true);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors text-left"
+                      >
+                        <KeyRound className="w-4 h-4 text-amber-600" />
+                        Change Password
+                      </button>
                       <Link
                         to="/admin/audit-logs"
                         onClick={() => setIsProfileOpen(false)}
@@ -372,8 +340,16 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         <main className="flex-1 min-w-0 w-full">
           {children}
         </main>
-
       </div>
+
+      {/* Admin Change Password Modal */}
+      <ChangePasswordModal
+        isOpen={isChangePasswordOpen}
+        onClose={() => setIsChangePasswordOpen(false)}
+        userEmail={session?.email}
+      />
     </div>
   );
 };
+
+

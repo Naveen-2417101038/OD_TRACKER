@@ -27,6 +27,53 @@ except ImportError:
         notifications_collection
     )
 
+try:
+    from backend.services.email_service import (
+        get_student_info,
+        get_mentors_for_department,
+        get_class_incharges_for_department,
+        get_hods_for_department,
+        send_od_submitted_student_notification,
+        send_new_od_mentor_notification,
+        send_od_mentor_approved_student_notification,
+        send_od_forwarded_class_incharge_notification,
+        send_od_mentor_rejected_student_notification,
+        send_od_ci_approved_student_notification,
+        send_od_forwarded_hod_notification,
+        send_od_ci_rejected_student_notification,
+        send_od_hod_approved_student_notification,
+        send_od_hod_rejected_student_notification,
+        send_certificate_reminder_student_notification,
+        send_certificate_uploaded_student_notification,
+        send_certificate_submitted_faculty_notification,
+        send_certificate_verified_student_notification,
+        send_certificate_rejected_student_notification,
+        send_od_expired_student_notification
+    )
+except ImportError:
+    from services.email_service import (
+        get_student_info,
+        get_mentors_for_department,
+        get_class_incharges_for_department,
+        get_hods_for_department,
+        send_od_submitted_student_notification,
+        send_new_od_mentor_notification,
+        send_od_mentor_approved_student_notification,
+        send_od_forwarded_class_incharge_notification,
+        send_od_mentor_rejected_student_notification,
+        send_od_ci_approved_student_notification,
+        send_od_forwarded_hod_notification,
+        send_od_ci_rejected_student_notification,
+        send_od_hod_approved_student_notification,
+        send_od_hod_rejected_student_notification,
+        send_certificate_reminder_student_notification,
+        send_certificate_uploaded_student_notification,
+        send_certificate_submitted_faculty_notification,
+        send_certificate_verified_student_notification,
+        send_certificate_rejected_student_notification,
+        send_od_expired_student_notification
+    )
+
 class ODRequestModel:
     @staticmethod
     def calculate_days(from_date, to_date):
@@ -149,6 +196,14 @@ class ODRequestModel:
                 'is_read': 0,
                 'created_at': now_str
             })
+
+        # Primary and only notification channel: Send email notification
+        try:
+            s_email, s_name = get_student_info(doc)
+            if s_email:
+                send_od_expired_student_notification(s_email, s_name, doc.get('event_name') or 'Event', rejection_reason)
+        except Exception as e:
+            print(f"[-] Email dispatch error on expiration: {e}")
 
         return ODRequestModel.get_by_id(doc.get('id'))
 
@@ -485,6 +540,19 @@ class ODRequestModel:
                 'created_at': now
             })
 
+        # Dispatch email notifications to student and faculty mentor
+        try:
+            s_email, s_name = get_student_info(doc)
+            dates_str = f"{from_date} to {to_date}" if to_date and to_date != from_date else from_date
+            if s_email:
+                send_od_submitted_student_notification(s_email, s_name, doc.get('event_name'), dates_str, req_id)
+
+            mentors = get_mentors_for_department(doc.get('department'))
+            for m_email, m_name in mentors:
+                send_new_od_mentor_notification(m_email, m_name, s_name, doc.get('event_name'), dates_str, req_id)
+        except Exception as e:
+            print(f"[-] Email notification dispatch error on create: {e}")
+
         return ODRequestModel.get_by_id(req_id)
 
     @staticmethod
@@ -636,6 +704,18 @@ class ODRequestModel:
                 'created_at': now
             })
 
+        # Primary and only notification channel: Send email notifications
+        try:
+            s_email, s_name = get_student_info(req)
+            if s_email:
+                send_od_mentor_approved_student_notification(s_email, s_name, req['eventName'], actual_remarks)
+
+            cincharges = get_class_incharges_for_department(req.get('department') or req.get('studentDepartment'), req.get('section') or req.get('studentSection'))
+            for ci_email, ci_name in cincharges:
+                send_od_forwarded_class_incharge_notification(ci_email, ci_name, s_name, req['eventName'], req['id'])
+        except Exception as e:
+            print(f"[-] Email notification dispatch error on mentor approve: {e}")
+
         return ODRequestModel.get_by_id(request_id), None
 
     @staticmethod
@@ -718,6 +798,14 @@ class ODRequestModel:
                 'is_read': 0,
                 'created_at': now
             })
+
+        # Primary and only notification channel: Send email notification
+        try:
+            s_email, s_name = get_student_info(req)
+            if s_email:
+                send_od_mentor_rejected_student_notification(s_email, s_name, req['eventName'], clean_reason)
+        except Exception as e:
+            print(f"[-] Email notification dispatch error on mentor reject: {e}")
 
         return ODRequestModel.get_by_id(request_id), None
 
@@ -823,6 +911,18 @@ class ODRequestModel:
                 'created_at': now
             })
 
+        # Primary and only notification channel: Send email notifications
+        try:
+            s_email, s_name = get_student_info(req)
+            if s_email:
+                send_od_ci_approved_student_notification(s_email, s_name, req['eventName'], actual_remarks)
+
+            hods = get_hods_for_department(req.get('department') or req.get('studentDepartment'))
+            for h_email, h_name in hods:
+                send_od_forwarded_hod_notification(h_email, h_name, s_name, req['eventName'], req['id'])
+        except Exception as e:
+            print(f"[-] Email notification dispatch error on CI approve: {e}")
+
         return ODRequestModel.get_by_id(request_id), None
 
     @staticmethod
@@ -905,6 +1005,14 @@ class ODRequestModel:
                 'is_read': 0,
                 'created_at': now
             })
+
+        # Primary and only notification channel: Send email notification
+        try:
+            s_email, s_name = get_student_info(req)
+            if s_email:
+                send_od_ci_rejected_student_notification(s_email, s_name, req['eventName'], clean_reason)
+        except Exception as e:
+            print(f"[-] Email notification dispatch error on CI reject: {e}")
 
         return ODRequestModel.get_by_id(request_id), None
 
@@ -1013,6 +1121,14 @@ class ODRequestModel:
                 'created_at': now
             })
 
+        # Primary and only notification channel: Send email notification to student
+        try:
+            s_email, s_name = get_student_info(req)
+            if s_email:
+                send_od_hod_approved_student_notification(s_email, s_name, req['eventName'], actual_remarks)
+        except Exception as e:
+            print(f"[-] Email notification dispatch error on HOD approve: {e}")
+
         return ODRequestModel.get_by_id(request_id), None
 
     @staticmethod
@@ -1095,6 +1211,14 @@ class ODRequestModel:
                 'is_read': 0,
                 'created_at': now
             })
+
+        # Primary and only notification channel: Send email notification to student
+        try:
+            s_email, s_name = get_student_info(req)
+            if s_email:
+                send_od_hod_rejected_student_notification(s_email, s_name, req['eventName'], clean_reason)
+        except Exception as e:
+            print(f"[-] Email notification dispatch error on HOD reject: {e}")
 
         return ODRequestModel.get_by_id(request_id), None
 
@@ -1204,6 +1328,18 @@ class ODRequestModel:
                 'created_at': now_str
             })
 
+        # Primary and only notification channel: Send email notifications
+        try:
+            s_email, s_name = get_student_info(req)
+            if s_email:
+                send_certificate_uploaded_student_notification(s_email, s_name, req['eventName'])
+
+            mentors = get_mentors_for_department(req.get('department') or req.get('studentDepartment'))
+            for m_email, m_name in mentors:
+                send_certificate_submitted_faculty_notification(m_email, m_name, s_name, req['eventName'], req['id'])
+        except Exception as e:
+            print(f"[-] Email notification dispatch error on certificate upload: {e}")
+
         return ODRequestModel.get_by_id(request_id), None
 
     @staticmethod
@@ -1291,5 +1427,16 @@ class ODRequestModel:
                 'is_read': 0,
                 'created_at': now
             })
+
+        # Primary and only notification channel: Send email notification to student
+        try:
+            s_email, s_name = get_student_info(req)
+            if s_email:
+                if is_approved:
+                    send_certificate_verified_student_notification(s_email, s_name, req['eventName'], feedback)
+                else:
+                    send_certificate_rejected_student_notification(s_email, s_name, req['eventName'], feedback)
+        except Exception as e:
+            print(f"[-] Email notification dispatch error on certificate verify: {e}")
 
         return ODRequestModel.get_by_id(request_id), None

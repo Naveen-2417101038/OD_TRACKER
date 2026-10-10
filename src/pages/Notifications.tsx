@@ -1,157 +1,110 @@
-import React, { useState, useEffect } from 'react';
-import { getNotifications, markNotificationAsRead, markAllNotificationsAsRead, clearAllNotifications } from '../data/mockData';
-import { NotificationItem } from '../types/types';
+import React from 'react';
+import { Link } from 'react-router-dom';
 import { Card } from '../components/Card';
-import { Bell, Check, Trash2, CheckSquare, RefreshCw, Clock } from 'lucide-react';
-import { useToast } from '../components/Toast';
+import { Mail, ShieldCheck, CheckCircle2, ArrowRight, ListTodo, Send, Clock, AlertCircle } from 'lucide-react';
+import { getStudentProfile } from '../data/mockData';
 
 export const Notifications: React.FC = () => {
-  const { showToast } = useToast();
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-
-  const loadNotifications = () => {
-    setNotifications(getNotifications());
-  };
-
-  useEffect(() => {
-    loadNotifications();
-    
-    // Refresh when events happen
-    window.addEventListener('odStateUpdated', loadNotifications);
-    return () => window.removeEventListener('odStateUpdated', loadNotifications);
-  }, []);
-
-  const handleMarkAsRead = (id: string) => {
-    markNotificationAsRead(id);
-    loadNotifications();
-    // Dispatch custom event to sync layout header
-    window.dispatchEvent(new CustomEvent('odStateUpdated'));
-    showToast('Alert marked as read', 'info');
-  };
-
-  const handleMarkAllRead = () => {
-    markAllNotificationsAsRead();
-    loadNotifications();
-    window.dispatchEvent(new CustomEvent('odStateUpdated'));
-    showToast('All notifications marked as read', 'success');
-  };
-
-  const handleClearAll = () => {
-    if (window.confirm('Are you sure you want to clear all notification logs?')) {
-      clearAllNotifications();
-      loadNotifications();
-      window.dispatchEvent(new CustomEvent('odStateUpdated'));
-      showToast('Notification logs cleared', 'info');
-    }
-  };
-
-  const formatTimeAgo = (isoString: string) => {
-    const date = new Date(isoString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMins / 60);
-    const diffDays = Math.floor(diffHours / 24);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    return `${diffDays}d ago`;
-  };
+  const student = getStudentProfile();
 
   return (
-    <div className="space-y-6">
-      
+    <div className="space-y-6 max-w-4xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div className="flex items-center gap-3">
-          <div className="bg-primary-600 p-2 rounded-xl text-white">
-            <Bell className="w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-black text-slate-800 tracking-tight">ERP System Alerts</h1>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mt-0.5">Logs of notifications received regarding OD approvals</p>
-          </div>
+      <div className="flex items-center gap-3">
+        <div className="bg-primary-600 p-2.5 rounded-2xl text-white shadow-md shadow-primary-600/30">
+          <Mail className="w-6 h-6" />
         </div>
-
-        <div className="flex items-center gap-2">
-          {notifications.length > 0 && (
-            <>
-              <button
-                onClick={handleMarkAllRead}
-                className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-3.5 py-2 rounded-xl text-xs font-bold shadow-sm transition-all"
-              >
-                <CheckSquare className="w-4 h-4 text-primary-600" />
-                <span>Mark All Read</span>
-              </button>
-              <button
-                onClick={handleClearAll}
-                className="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3.5 py-2 rounded-xl text-xs font-bold shadow-sm transition-all"
-              >
-                <Trash2 className="w-4 h-4 text-rose-600" />
-                <span>Clear All</span>
-              </button>
-            </>
-          )}
+        <div>
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Institutional Email Notifications</h1>
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mt-0.5">
+            Primary & Only Official Communication Channel
+          </p>
         </div>
       </div>
 
-      {/* Notifications List Container */}
-      <Card>
-        {notifications.length === 0 ? (
-          <div className="text-center py-20 text-slate-400 font-semibold space-y-2">
-            <Bell className="w-12 h-12 mx-auto text-slate-200" />
-            <p className="text-sm">You have clean notification inbox.</p>
-            <p className="text-xs font-medium text-slate-400">Any status changes will show up here.</p>
+      {/* Main Notice Card */}
+      <Card className="p-6 sm:p-8 space-y-6 border border-slate-200 shadow-sm">
+        <div className="flex items-start gap-4">
+          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl border border-emerald-200 shrink-0">
+            <ShieldCheck className="w-8 h-8" />
           </div>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {notifications.map((notif) => {
-              return (
-                <div 
-                  key={notif.id}
-                  className={`py-4 flex items-start gap-4 transition-colors first:pt-0 last:pb-0 ${
-                    !notif.read ? 'bg-primary-50/20 px-3 rounded-2xl border border-primary-100/30' : ''
-                  }`}
-                >
-                  {/* Status dot icon */}
-                  <div className={`mt-1 flex-shrink-0 w-3 h-3 rounded-full ${
-                    notif.type === 'success' ? 'bg-emerald-500' :
-                    notif.type === 'error' ? 'bg-rose-500' :
-                    notif.type === 'warning' ? 'bg-amber-500' : 'bg-primary-500'
-                  }`} />
-
-                  {/* Body */}
-                  <div className="flex-1 space-y-1">
-                    <p className={`text-xs md:text-sm text-slate-700 ${!notif.read ? 'font-bold' : 'font-medium'}`}>
-                      {notif.message}
-                    </p>
-                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-semibold">
-                      <Clock className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{formatTimeAgo(notif.timestamp)}</span>
-                      <span>•</span>
-                      <span>{new Date(notif.timestamp).toLocaleString()}</span>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  {!notif.read && (
-                    <button
-                      onClick={() => handleMarkAsRead(notif.id)}
-                      className="flex-shrink-0 flex items-center justify-center gap-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1 text-[10px] font-bold text-slate-600 transition-colors shadow-sm"
-                      title="Mark as read"
-                    >
-                      <Check className="w-3 h-3 text-emerald-600" />
-                      <span>Mark Read</span>
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+          <div className="space-y-1">
+            <h2 className="text-lg font-black text-slate-900">Email-Only Notification Policy Active</h2>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              All OD application approvals, mentor recommendations, class incharge endorsements, HOD sanctions, certificate submission verifications, and security alerts are delivered directly to your official college email:
+            </p>
+            <div className="pt-2">
+              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-mono font-bold text-slate-900">
+                <Mail className="w-3.5 h-3.5 text-primary-600" />
+                {student?.email || 'student@rajalakshmi.edu.in'}
+              </span>
+            </div>
           </div>
-        )}
+        </div>
+
+        {/* Workflow Delivery Breakdown */}
+        <div className="border-t border-slate-100 pt-6 space-y-3">
+          <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+            Automated Notification Triggers Sent To Your Inbox:
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-start gap-3">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-slate-800">OD Submission & Stage Forwarding</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Instant delivery when application progresses through Mentor, Class Incharge, and HOD.</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-start gap-3">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-slate-800">Final Sanctions & Attendance Credit</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Immediate receipt of HOD approval remarks and attendance update confirmations.</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-start gap-3">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-slate-800">Certificate Verifications & Reminders</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Automated reminders before the 5-day upload deadline expires and review updates.</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-start gap-3">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-slate-800">Security & Authentication Alerts</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Expiring 6-digit verification OTPs and instant password change confirmation notices.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Action Button */}
+        <div className="border-t border-slate-100 pt-6 flex flex-wrap items-center justify-between gap-3">
+          <span className="text-[11px] text-slate-500">
+            Check your official inbox or spam folder if you do not receive an expected message.
+          </span>
+          <div className="flex gap-2">
+            <Link
+              to="/student/requests"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold transition-all shadow-sm shadow-primary-600/20"
+            >
+              <ListTodo className="w-3.5 h-3.5" />
+              <span>View My OD Requests</span>
+            </Link>
+            <Link
+              to="/student/dashboard"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors"
+            >
+              <span>Back to Dashboard</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+        </div>
       </Card>
-
     </div>
   );
 };

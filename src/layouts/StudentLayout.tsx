@@ -2,10 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, FilePlus2, ListTodo, History, Percent, 
-  GraduationCap, Award, Bell, User, LogOut, Menu, X, Landmark, ShieldCheck
+  GraduationCap, Award, User, LogOut, Menu, X, Landmark, ShieldCheck
 } from 'lucide-react';
-import { getStudentProfile, getNotifications, markNotificationAsRead, markAllNotificationsAsRead, clearAuthSession } from '../data/mockData';
-import { Student, NotificationItem } from '../types/types';
+import { getStudentProfile, clearAuthSession } from '../data/mockData';
+import { Student } from '../types/types';
 import { useToast } from '../components/Toast';
 
 interface StudentLayoutProps {
@@ -18,17 +18,13 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
   const { showToast } = useToast();
   
   const [student, setStudent] = useState<Student | null>(null);
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   
-  const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
 
   const loadData = () => {
     setStudent(getStudentProfile());
-    setNotifications(getNotifications());
   };
 
   useEffect(() => {
@@ -43,9 +39,6 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
   // Close menus on click outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
-        setIsNotifOpen(false);
-      }
       if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
         setIsProfileOpen(false);
       }
@@ -62,31 +55,15 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
     { name: 'Attendance', path: '/student/attendance', icon: Percent },
     { name: 'CAT Marks', path: '/student/marks', icon: GraduationCap },
     { name: 'Certificates', path: '/student/certificates', icon: Award },
-    { name: 'Notifications', path: '/student/notifications', icon: Bell },
     { name: 'Profile', path: '/student/profile', icon: User },
   ];
-
-  const unreadCount = notifications.filter(n => !n.read).length;
-
-  const handleMarkAsRead = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    markNotificationAsRead(id);
-    loadData();
-    showToast('Notification marked as read', 'info');
-  };
-
-  const handleMarkAllRead = () => {
-    markAllNotificationsAsRead();
-    loadData();
-    setIsNotifOpen(false);
-    showToast('All notifications marked as read', 'success');
-  };
 
   const handleLogout = () => {
     clearAuthSession();
     showToast('Logged out from Student Portal successfully', 'info');
     navigate('/login', { replace: true });
   };
+
 
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans antialiased text-slate-800">
@@ -123,13 +100,6 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
               >
                 <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                 <span>{item.name}</span>
-                {item.name === 'Notifications' && unreadCount > 0 && (
-                  <span className={`ml-auto font-black text-[10px] px-2 py-0.5 rounded-full ${
-                    isActive ? 'bg-white text-primary-600' : 'bg-rose-500 text-white animate-pulse'
-                  }`}>
-                    {unreadCount}
-                  </span>
-                )}
               </Link>
             );
           })}
@@ -180,87 +150,11 @@ export const StudentLayout: React.FC<StudentLayoutProps> = ({ children }) => {
               <span>All Dashboards Hub</span>
             </Link>
 
-            {/* Notification Bell Dropdown */}
-            <div className="relative" ref={notifRef}>
-              <button
-                type="button"
-                onClick={() => { setIsNotifOpen(!isNotifOpen); setIsProfileOpen(false); }}
-                className="p-2.5 text-slate-500 hover:bg-slate-100 rounded-xl transition-colors relative"
-                aria-label="Notifications"
-              >
-                <Bell className="w-5 h-5 text-slate-600" />
-                {unreadCount > 0 && (
-                  <span className="absolute top-1.5 right-1.5 bg-rose-500 text-white rounded-full text-[10px] font-bold w-4 h-4 flex items-center justify-center animate-pulse">
-                    {unreadCount}
-                  </span>
-                )}
-              </button>
-
-              {isNotifOpen && (
-                <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 md:w-96 min-w-[18rem] sm:min-w-[22rem] max-w-sm sm:max-w-md bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden animate-slide-in">
-                  <div className="p-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-                    <span className="font-bold text-xs text-slate-800">Notifications ({unreadCount} new)</span>
-                    {unreadCount > 0 && (
-                      <button 
-                        type="button"
-                        onClick={handleMarkAllRead}
-                        className="text-[10px] text-primary-600 hover:underline font-bold"
-                      >
-                        Mark all read
-                      </button>
-                    )}
-                  </div>
-                  <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
-                    {notifications.length === 0 ? (
-                      <div className="p-6 text-center text-xs text-slate-400 font-medium">No notifications yet.</div>
-                    ) : (
-                      notifications.slice(0, 5).map((notif) => (
-                        <div 
-                          key={notif.id} 
-                          onClick={() => { navigate('/student/notifications'); setIsNotifOpen(false); }}
-                          className={`p-3 text-xs leading-normal hover:bg-slate-50 transition-colors cursor-pointer flex gap-3 ${!notif.read ? 'bg-primary-50/40 font-semibold' : ''}`}
-                        >
-                          <span className={`h-2 w-2 rounded-full mt-1.5 shrink-0 ${
-                            notif.type === 'success' ? 'bg-emerald-500' :
-                            notif.type === 'error' ? 'bg-rose-500' :
-                            notif.type === 'warning' ? 'bg-amber-500' : 'bg-blue-500'
-                          }`} />
-                          <div className="flex-1">
-                            <p className="text-slate-800 text-[11px] leading-relaxed">{notif.message}</p>
-                            <span className="text-[9px] text-slate-400 mt-1 block">
-                              {new Date(notif.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} &bull; {new Date(notif.timestamp).toLocaleDateString()}
-                            </span>
-                          </div>
-                          {!notif.read && (
-                            <button
-                              type="button"
-                              onClick={(e) => handleMarkAsRead(notif.id, e)}
-                              className="text-[10px] text-primary-600 hover:text-primary-800 font-bold self-start mt-0.5 ml-2"
-                              title="Mark read"
-                            >
-                              Mark Read
-                            </button>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  <Link
-                    to="/student/notifications"
-                    onClick={() => setIsNotifOpen(false)}
-                    className="block p-2.5 border-t border-slate-100 text-center text-xs font-bold text-primary-600 hover:bg-slate-50 bg-slate-50/50"
-                  >
-                    View all notifications
-                  </Link>
-                </div>
-              )}
-            </div>
-
             {/* Profile Dropdown */}
             <div className="relative shrink-0" ref={profileRef}>
               <button
                 type="button"
-                onClick={() => { setIsProfileOpen(!isProfileOpen); setIsNotifOpen(false); }}
+                onClick={() => setIsProfileOpen(!isProfileOpen)}
                 className="flex items-center gap-2.5 p-1.5 hover:bg-slate-100 rounded-xl transition-colors text-left cursor-pointer"
                 aria-label="User Profile"
               >

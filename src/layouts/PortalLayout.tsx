@@ -1,15 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
-  Landmark, Bell, LogOut, ShieldCheck, Zap
+  Landmark, LogOut, ShieldCheck, Zap, KeyRound
 } from 'lucide-react';
 import { 
-  getAuthSession, clearAuthSession, getRoleLoginPath, 
-  getFacultyNotifications, markFacultyNotificationAsRead, 
-  markAllFacultyNotificationsAsRead
+  getAuthSession, clearAuthSession, getRoleLoginPath 
 } from '../data/mockData';
-import { UserRole, NotificationItem } from '../types/types';
+import { UserRole } from '../types/types';
 import { useToast } from '../components/Toast';
+import { ChangePasswordModal } from '../components/ChangePasswordModal';
 
 interface PortalLayoutProps {
   role: UserRole;
@@ -22,37 +21,7 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
   const { showToast } = useToast();
 
   const session = getAuthSession();
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [isNotifOpen, setIsNotifOpen] = useState(false);
-
-  const notifRef = useRef<HTMLDivElement>(null);
-
-  const loadNotifications = () => {
-    const notifs = getFacultyNotifications(session?.userId, role);
-    setNotifications(notifs);
-  };
-
-  useEffect(() => {
-    loadNotifications();
-    const handleUpdate = () => loadNotifications();
-    window.addEventListener('odFacultyStateUpdated', handleUpdate);
-    window.addEventListener('odStateUpdated', handleUpdate);
-    return () => {
-      window.removeEventListener('odFacultyStateUpdated', handleUpdate);
-      window.removeEventListener('odStateUpdated', handleUpdate);
-    };
-  }, [role, session?.userId]);
-
-  // Click outside listener
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
-        setIsNotifOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
 
   const handleLogout = () => {
     clearAuthSession();
@@ -60,17 +29,6 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
     navigate('/login', { replace: true });
   };
 
-  const handleMarkAsRead = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    markFacultyNotificationAsRead(id);
-    loadNotifications();
-  };
-
-  const handleMarkAllAsRead = () => {
-    markAllFacultyNotificationsAsRead(session?.userId);
-    loadNotifications();
-    showToast('All notifications marked as read', 'info');
-  };
 
   // Define role badge color
   const getRoleBadgeStyle = (r: UserRole) => {
@@ -170,8 +128,6 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
     { label: '4. HOD', idx: 3 },
   ];
 
-  const unreadCount = notifications.filter(n => !n.read).length;
-
   return (
     <div className={`min-h-screen ${theme.pageBg} flex flex-col font-sans antialiased text-slate-800 transition-colors duration-300`}>
       
@@ -210,70 +166,17 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
               <span>System Status: Active</span>
             </div>
 
-            {/* Notifications Dropdown */}
-            <div className="relative shrink-0" ref={notifRef}>
-              <button
-                type="button"
-                onClick={() => setIsNotifOpen(!isNotifOpen)}
-                aria-label="Notifications"
-                className="relative p-2.5 rounded-xl hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-colors"
-              >
-                <Bell className="w-5 h-5" />
-                {unreadCount > 0 && (
-                  <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-rose-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center animate-pulse">
-                    {unreadCount}
-                  </span>
-                )}
-              </button>
+            {/* Change Password Button */}
+            <button
+              type="button"
+              onClick={() => setIsChangePasswordOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors border border-slate-200/80 cursor-pointer"
+              title="Change Password"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-amber-600" />
+              <span className="hidden sm:inline">Change Password</span>
+            </button>
 
-              {isNotifOpen && (
-                <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 md:w-96 min-w-[18rem] sm:min-w-[22rem] max-w-sm sm:max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden z-50 animate-slide-in">
-                  <div className="p-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-                    <div className="flex items-center gap-2">
-                      <Bell className="w-4 h-4 text-primary-600" />
-                      <span className="text-xs font-bold text-slate-900">Notifications ({unreadCount} new)</span>
-                    </div>
-                    {unreadCount > 0 && (
-                      <button
-                        type="button"
-                        onClick={handleMarkAllAsRead}
-                        className="text-[10px] font-bold text-primary-600 hover:text-primary-800"
-                      >
-                        Mark all as read
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
-                    {notifications.length === 0 ? (
-                      <div className="p-6 text-center text-xs text-slate-400 font-medium">
-                        No notifications found.
-                      </div>
-                    ) : (
-                      notifications.slice(0, 6).map((notif) => (
-                        <div 
-                          key={notif.id} 
-                          onClick={(e) => handleMarkAsRead(notif.id, e)}
-                          className={`p-3 text-xs cursor-pointer transition-colors ${notif.read ? 'bg-white opacity-70 hover:opacity-100' : 'bg-primary-50/40 hover:bg-primary-50/80 font-semibold'}`}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="text-slate-800 text-[11px] leading-relaxed">
-                              {notif.message}
-                            </p>
-                            {!notif.read && (
-                              <span className="w-2 h-2 rounded-full bg-primary-600 shrink-0 mt-1" />
-                            )}
-                          </div>
-                          <span className="text-[9px] text-slate-400 block mt-1">
-                            {new Date(notif.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} &bull; {new Date(notif.timestamp).toLocaleDateString()}
-                          </span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
 
             {/* User Profile info */}
             <div className="flex items-center gap-2.5 pl-2 border-l border-slate-200">
@@ -337,7 +240,13 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
           OD Tracking Application &bull; Rajalakshmi Engineering College &copy; {new Date().getFullYear()}
         </p>
       </footer>
-
+      {/* Change Password Modal */}
+      <ChangePasswordModal
+        isOpen={isChangePasswordOpen}
+        onClose={() => setIsChangePasswordOpen(false)}
+        userEmail={session?.email}
+      />
     </div>
   );
 };
+

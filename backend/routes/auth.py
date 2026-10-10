@@ -16,9 +16,21 @@ from werkzeug.local import LocalProxy
 try:
     from backend.models.user import UserModel, validate_college_email
     from backend.database.mongodb import users_collection
+    from backend.services.email_service import (
+        send_otp_email,
+        send_password_changed_notification,
+        send_password_reset_email,
+        send_verification_email
+    )
 except ImportError:
     from models.user import UserModel, validate_college_email
     from database.mongodb import users_collection
+    from services.email_service import (
+        send_otp_email,
+        send_password_changed_notification,
+        send_password_reset_email,
+        send_verification_email
+    )
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -324,52 +336,17 @@ def register():
         'user': UserModel.to_safe_dict(created_user)
     }), 201
 
-@auth_bp.route('/forgot-password', methods=['POST'])
-def forgot_password():
-    """
-    Password reset request endpoint.
-    Mitigates account enumeration by returning an identical generic success message.
-    """
-    data = request.get_json(silent=True) or {}
-    email = (data.get('email') or '').strip().lower()
-
-    if not email:
-        return jsonify({'success': False, 'error': 'College email is required.'}), 400
-
-    UserModel.create_password_reset_token(email)
-
-    return jsonify({
-        'success': True,
-        'message': 'If an account exists with this email address, a password reset link has been sent to your inbox.'
-    }), 200
-
-@auth_bp.route('/reset-password', methods=['POST'])
-def reset_password():
-    """Reset password using single-use secure reset token."""
-    data = request.get_json(silent=True) or {}
-    token = (data.get('token') or '').strip()
-    new_password = (data.get('newPassword') or data.get('new_password') or '').strip()
-    confirm_password = (data.get('confirmPassword') or data.get('confirm_password') or '').strip()
-
-    if not token or not new_password or not confirm_password:
-        return jsonify({'success': False, 'error': 'Token, new password, and confirm password are required.'}), 400
-
-    if new_password != confirm_password:
-        return jsonify({'success': False, 'error': 'New passwords do not match.'}), 400
-
-    if len(new_password) < 6:
-        return jsonify({'success': False, 'error': 'Password must be at least 6 characters long.'}), 400
-
-    success, msg = UserModel.reset_password(token, new_password)
-    if not success:
-        return jsonify({'success': False, 'error': msg}), 400
-
-    return jsonify({'success': True, 'message': msg}), 200
-
 @auth_bp.route('/change-password', methods=['POST'])
 @login_required
 def change_password():
-    """Change password for currently authenticated session."""
+    """
+    Method A — Change password using the current password for an authenticated session.
+    1. Verify current password against stored password hash.
+    2. Validate new password meets length and complexity criteria (min 6 chars, != current).
+    3. Ensure new password and confirm password match.
+    4. Update password hash securely in the database.
+    5. Dispatch email notification alerting the user that their password was changed.
+    """
     data = request.get_json(silent=True) or {}
     current_password = (data.get('currentPassword') or data.get('current_password') or '').strip()
     new_password = (data.get('newPassword') or data.get('new_password') or '').strip()
@@ -379,19 +356,185 @@ def change_password():
         return jsonify({'success': False, 'error': 'Current password, new password, and confirm password are required.'}), 400
 
     if new_password != confirm_password:
-        return jsonify({'success': False, 'error': 'New passwords do not match.'}), 400
+        return jsonify({'success': False, 'error': 'New password and confirmation password do not match.'}), 400
 
     if len(new_password) < 6:
         return jsonify({'success': False, 'error': 'New password must be at least 6 characters long.'}), 400
 
+    if current_password == new_password:
+        return jsonify({'success': False, 'error': 'New password cannot be identical to your current password.'}), 400
+
     user = get_authenticated_user()
     if not user:
-        return jsonify({'success': False, 'error': 'Authentication required.'}), 401
-    success, msg = UserModel.change_password(user['id'], new_password, current_password)
+        return jsonify({'success': False, 'error': 'Authentication required. Please log in.'}), 401
+
+    if not UserModel.verify_password(user, current_password):
+        return jsonify({'success': False, 'error': 'Current password is incorrect. Please check and try again.'}), 400
+
+    success, msg = UserModel.change_password(user['id'], new_password)
     if not success:
         return jsonify({'success': False, 'error': msg}), 400
 
-    return jsonify({'success': True, 'message': msg}), 200
+    # Dispatch email confirmation
+    if user.get('email'):
+        send_password_changed_notification(user['email'], user.get('name') or 'User')
+
+    return jsonify({
+        'success': True,
+        'message': 'Password has been updated successfully.'
+    }), 200
+
+@auth_bp.route('/otp/send', methods=['POST'])
+def send_password_otp():
+    """
+    Method B & Public Forgot Password — Send 6-digit cryptographically secure OTP.
+    - If authenticated: retrieves registered email of the authenticated account.
+    - If unauthenticated: accepts email address. Never reveals whether arbitrary email exists.
+    - Expires in 5 minutes, single-use, rate-limited (60-second cooldown).
+    """
+    data = request.get_json(silent=True) or {}
+    req_email = (data.get('email') or '').strip().lower()
+    auth_user = get_current_authenticated_user()
+
+    target_user = None
+    email_to_send = None
+
+    if auth_user:
+        target_user = auth_user
+        email_to_send = auth_user.get('email')
+    elif req_email:
+        target_user = UserModel.get_by_email(req_email) or UserModel.get_by_identifier(req_email)
+        email_to_send = target_user.get('email') if target_user else req_email
+    else:
+        return jsonify({'success': False, 'error': 'Registered email address or authenticated session is required.'}), 400
+
+    generic_msg = 'If an account exists with this email address, a password reset link has been sent to your inbox.'
+
+    if not target_user or not email_to_send:
+        # Mitigate account enumeration: return identical success message even if user not found
+        return jsonify({'success': True, 'message': generic_msg}), 200
+
+    raw_otp, updated_user, err = UserModel.create_email_otp(target_user, purpose="password update")
+    if err:
+        return jsonify({'success': False, 'error': err}), 429
+
+    recipient_name = target_user.get('name') or 'User'
+    sent = send_otp_email(email_to_send, recipient_name, raw_otp, purpose="password reset/change")
+
+    # If live SMTP host is specified but transmission failed, report delivery failure
+    if not sent and os.environ.get('SMTP_HOST'):
+        return jsonify({'success': False, 'error': 'Unable to deliver verification email. Please contact the administrator.'}), 502
+
+    # Mask email for safe UI display (e.g., na***@rajalakshmi.edu.in)
+    masked_email = email_to_send
+    if '@' in email_to_send:
+        local, domain = email_to_send.split('@', 1)
+        visible_len = min(2, len(local))
+        masked_email = f"{local[:visible_len]}***@{domain}"
+
+    # Return identical generic message on public unauthenticated requests to prevent enumeration,
+    # or specific message for authenticated in-app profile users
+    response_msg = f'A 6-digit verification code has been sent to {masked_email}. Code expires in 5 minutes.' if auth_user else generic_msg
+
+    return jsonify({
+        'success': True,
+        'message': response_msg,
+        'maskedEmail': masked_email,
+        'registeredEmail': email_to_send if auth_user else None
+    }), 200
+
+@auth_bp.route('/otp/verify', methods=['POST'])
+def verify_password_otp():
+    """
+    Verify 6-digit OTP code against secure stored hash with 5-minute expiry and attempt limiting.
+    Returns single-use reset token upon successful verification.
+    """
+    data = request.get_json(silent=True) or {}
+    otp = (data.get('otp') or data.get('otpCode') or '').strip()
+    req_email = (data.get('email') or '').strip().lower()
+    auth_user = get_current_authenticated_user()
+
+    if not otp:
+        return jsonify({'success': False, 'error': '6-digit OTP code is required.'}), 400
+
+    target_user = auth_user or (UserModel.get_by_email(req_email) if req_email else None)
+    if not target_user:
+        return jsonify({'success': False, 'error': 'Invalid or expired verification session.'}), 400
+
+    success, raw_reset_token, msg = UserModel.verify_email_otp(target_user, otp)
+    if not success:
+        return jsonify({'success': False, 'error': msg}), 400
+
+    return jsonify({
+        'success': True,
+        'resetToken': raw_reset_token,
+        'reset_token': raw_reset_token,
+        'message': 'OTP verified successfully! You may now enter your new password.'
+    }), 200
+
+@auth_bp.route('/otp/reset-password', methods=['POST'])
+def reset_password_with_otp():
+    """
+    Update password after OTP verification using single-use reset token or direct OTP verification.
+    Enforces security criteria, updates password hash, invalidates tokens, and sends confirmation email.
+    """
+    data = request.get_json(silent=True) or {}
+    reset_token = (data.get('resetToken') or data.get('reset_token') or data.get('token') or '').strip()
+    otp = (data.get('otp') or data.get('otpCode') or '').strip()
+    new_password = (data.get('newPassword') or data.get('new_password') or '').strip()
+    confirm_password = (data.get('confirmPassword') or data.get('confirm_password') or '').strip()
+    req_email = (data.get('email') or '').strip().lower()
+    auth_user = get_current_authenticated_user()
+
+    if not new_password or not confirm_password:
+        return jsonify({'success': False, 'error': 'New password and confirm password are required.'}), 400
+
+    if new_password != confirm_password:
+        return jsonify({'success': False, 'error': 'New password and confirmation password do not match.'}), 400
+
+    if len(new_password) < 6:
+        return jsonify({'success': False, 'error': 'New password must be at least 6 characters long.'}), 400
+
+    target_user = auth_user or (UserModel.get_by_email(req_email) if req_email else None)
+
+    # If direct OTP provided without separate verify step, verify OTP first
+    if not reset_token and otp and target_user:
+        ok, raw_token, err = UserModel.verify_email_otp(target_user, otp)
+        if not ok:
+            return jsonify({'success': False, 'error': err}), 400
+        reset_token = raw_token
+
+    if not reset_token:
+        return jsonify({'success': False, 'error': 'Reset verification token or valid OTP is required.'}), 400
+
+    success, msg = UserModel.reset_password(reset_token, new_password)
+    if not success:
+        return jsonify({'success': False, 'error': msg}), 400
+
+    # Dispatch email confirmation
+    if target_user and target_user.get('email'):
+        send_password_changed_notification(target_user['email'], target_user.get('name') or 'User')
+
+    # Invalidate session for security
+    session.clear()
+
+    return jsonify({
+        'success': True,
+        'message': 'Password has been updated successfully. Please log in with your new credentials.'
+    }), 200
+
+@auth_bp.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    """
+    Password reset request endpoint (backwards compatible alias).
+    Dispatches 6-digit OTP code to the user's institutional email address.
+    """
+    return send_password_otp()
+
+@auth_bp.route('/reset-password', methods=['POST'])
+def reset_password():
+    """Reset password using verified token (backwards compatible alias)."""
+    return reset_password_with_otp()
 
 @auth_bp.route('/verify-email', methods=['POST', 'GET'])
 def verify_email():

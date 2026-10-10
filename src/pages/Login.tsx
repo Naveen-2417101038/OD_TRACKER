@@ -4,7 +4,7 @@ import {
   Landmark, GraduationCap, UserCheck, Users, 
   Building2, Lock, User, Eye, EyeOff, 
   AlertCircle, ArrowRight, ShieldCheck,
-  CheckCircle2, HelpCircle, Sparkles
+  CheckCircle2, HelpCircle, Sparkles, RefreshCw, Mail, KeyRound
 } from 'lucide-react';
 import { useToast } from '../components/Toast';
 import { 
@@ -14,6 +14,8 @@ import {
   forgotPasswordAsync,
   registerUserAsync 
 } from '../data/mockData';
+import { apiSendOtp, apiResetPasswordOtp } from '../services/api';
+
 import { UserRole } from '../types/types';
 
 interface RoleOption {
@@ -166,7 +168,135 @@ export const Login: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotStep, setForgotStep] = useState<'email' | 'otp'>('email');
+  const [forgotOtp, setForgotOtp] = useState('');
+  const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
+  const [showForgotNewPass, setShowForgotNewPass] = useState(false);
+  const [showForgotConfirmPass, setShowForgotConfirmPass] = useState(false);
+  const [forgotTimer, setForgotTimer] = useState(300);
+  const [forgotCanResend, setForgotCanResend] = useState(false);
+  const [forgotCooldown, setForgotCooldown] = useState(60);
+  const [forgotError, setForgotError] = useState<string | null>(null);
   const [isForgotLoading, setIsForgotLoading] = useState(false);
+
+  // OTP Countdown timer
+  useEffect(() => {
+    let interval: any = null;
+    if (isForgotModalOpen && forgotStep === 'otp' && forgotTimer > 0) {
+      interval = setInterval(() => {
+        setForgotTimer((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isForgotModalOpen, forgotStep, forgotTimer]);
+
+  // OTP Resend cooldown timer
+  useEffect(() => {
+    let interval: any = null;
+    if (isForgotModalOpen && forgotStep === 'otp' && forgotCooldown > 0) {
+      interval = setInterval(() => {
+        setForgotCooldown((prev) => {
+          if (prev <= 1) {
+            setForgotCanResend(true);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isForgotModalOpen, forgotStep, forgotCooldown]);
+
+  // Open forgot modal helper
+  const openForgotModal = () => {
+    setForgotStep('email');
+    setForgotEmail('');
+    setForgotOtp('');
+    setForgotNewPassword('');
+    setForgotConfirmPassword('');
+    setForgotError(null);
+    setForgotTimer(300);
+    setForgotCanResend(false);
+    setForgotCooldown(60);
+    setIsForgotModalOpen(true);
+  };
+
+  // Dispatch OTP
+  const handleSendForgotOtp = async () => {
+    if (!forgotEmail || !forgotEmail.includes('@')) {
+      setForgotError('Please enter a valid official college email.');
+      return;
+    }
+    setForgotError(null);
+    setIsForgotLoading(true);
+    try {
+      const res = await apiSendOtp(forgotEmail);
+      if (res.success) {
+        setForgotStep('otp');
+        setForgotTimer(300);
+        setForgotCanResend(false);
+        setForgotCooldown(60);
+        showToast('6-digit verification OTP sent to your institutional email!', 'success');
+      } else {
+        setForgotError(res.error || 'Failed to dispatch OTP. Please verify email.');
+      }
+    } catch {
+      setForgotError('Unable to connect to server. Please verify network.');
+    } finally {
+      setIsForgotLoading(false);
+    }
+  };
+
+  // Verify OTP and reset password
+  const handleVerifyForgotOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotError(null);
+
+    const cleanOtp = forgotOtp.trim();
+    if (!cleanOtp || cleanOtp.length !== 6) {
+      setForgotError('Please enter a valid 6-digit OTP code.');
+      return;
+    }
+    if (!forgotNewPassword || forgotNewPassword.length < 6) {
+      setForgotError('New password must be at least 6 characters long.');
+      return;
+    }
+    if (forgotNewPassword !== forgotConfirmPassword) {
+      setForgotError('New password and confirmation do not match.');
+      return;
+    }
+    if (forgotTimer <= 0) {
+      setForgotError('OTP has expired. Please request a new code.');
+      return;
+    }
+
+    setIsForgotLoading(true);
+    try {
+      const res = await apiResetPasswordOtp({
+        otp: cleanOtp,
+        newPassword: forgotNewPassword,
+        confirmPassword: forgotConfirmPassword,
+        email: forgotEmail,
+      });
+
+      if (res.success) {
+        showToast('Password reset successfully! You can now sign in with your new credentials.', 'success');
+        setIsForgotModalOpen(false);
+      } else {
+        setForgotError(res.error || 'Failed to reset password. Please check OTP.');
+      }
+    } catch {
+      setForgotError('Unable to connect to server. Please try again.');
+    } finally {
+      setIsForgotLoading(false);
+    }
+  };
+
 
   // Registration Modal State
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
@@ -232,19 +362,7 @@ export const Login: React.FC = () => {
     }
   };
 
-  const handleForgotSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!forgotEmail) {
-      showToast('Please enter your registered institution email address.', 'error');
-      return;
-    }
-    setIsForgotLoading(true);
-    const result = await forgotPasswordAsync(forgotEmail);
-    setIsForgotLoading(false);
-    showToast(result.message || 'If an account exists for this email, a password reset link has been sent.', 'info');
-    setIsForgotModalOpen(false);
-    setForgotEmail('');
-  };
+
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -473,7 +591,7 @@ export const Login: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Remember Me */}
+                {/* Remember Me & Forgot Password Link */}
                 <div className="flex items-center justify-between text-xs pt-0.5">
                   <label className="flex items-center gap-2 text-slate-600 font-semibold cursor-pointer select-none">
                     <input
@@ -482,9 +600,15 @@ export const Login: React.FC = () => {
                       onChange={(e) => setRememberMe(e.target.checked)}
                       className="w-[18px] h-[18px] min-w-[18px] min-h-[18px] max-w-[18px] max-h-[18px] rounded border border-slate-300 accent-primary-600 text-primary-600 focus:ring-2 focus:ring-primary-500/20 cursor-pointer shrink-0"
                     />
-                    <span className="text-xs text-slate-600 font-semibold leading-tight">Remember this session</span>
+                    <span className="text-xs text-slate-600 font-semibold leading-tight">Remember me</span>
                   </label>
-                  <span className="text-[11px] text-slate-400 font-medium">Automatic Role Redirection</span>
+                  <button
+                    type="button"
+                    onClick={openForgotModal}
+                    className="text-xs font-bold text-primary-600 hover:text-primary-800 hover:underline cursor-pointer"
+                  >
+                    Forgot Password?
+                  </button>
                 </div>
 
                 {/* Submit Button */}
@@ -548,7 +672,7 @@ export const Login: React.FC = () => {
         </div>
       </main>
 
-      {/* Forgot Password Modal */}
+      {/* Forgot Password Modal (Method B: Email OTP Verification) */}
       {isForgotModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
           <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full border border-slate-200 shadow-2xl space-y-4">
@@ -558,40 +682,166 @@ export const Login: React.FC = () => {
               </div>
               <div>
                 <h3 className="text-lg font-black text-slate-900">Reset Portal Password</h3>
-                <p className="text-xs text-slate-500">Enter your registered institutional email address</p>
+                <p className="text-xs text-slate-500">
+                  {forgotStep === 'email' ? 'Enter your registered college email' : 'Verify OTP code & set new password'}
+                </p>
               </div>
             </div>
 
-            <form onSubmit={handleForgotSubmit} className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700">Official College Email</label>
-                <input
-                  type="email"
-                  value={forgotEmail}
-                  onChange={(e) => setForgotEmail(e.target.value)}
-                  placeholder="e.g. yourname@rajalakshmi.edu.in"
-                  required
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium focus:ring-2 focus:ring-primary-500 focus:outline-none"
-                />
+            {forgotError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2 text-rose-700 text-xs">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{forgotError}</span>
               </div>
+            )}
 
-              <div className="flex gap-2 justify-end pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsForgotModalOpen(false)}
-                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isForgotLoading}
-                  className="px-4 py-2 text-xs font-bold text-white bg-primary-600 hover:bg-primary-700 rounded-xl shadow-md cursor-pointer disabled:opacity-50"
-                >
-                  {isForgotLoading ? 'Sending...' : 'Send Reset Link'}
-                </button>
+            {forgotStep === 'email' ? (
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700">Official College Email</label>
+                  <input
+                    type="email"
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    placeholder="e.g. yourname@rajalakshmi.edu.in"
+                    required
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm font-medium focus:ring-2 focus:ring-primary-500 focus:outline-none"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    A cryptographically secure 6-digit OTP will be dispatched to this address.
+                  </p>
+                </div>
+
+                <div className="flex gap-2 justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsForgotModalOpen(false)}
+                    className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSendForgotOtp}
+                    disabled={isForgotLoading}
+                    className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl shadow-md cursor-pointer disabled:opacity-50"
+                  >
+                    {isForgotLoading ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Sending OTP...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Mail className="w-3.5 h-3.5" />
+                        <span>Send 6-Digit OTP</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
-            </form>
+            ) : (
+              <form onSubmit={handleVerifyForgotOtp} className="space-y-4">
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-[11px] text-amber-900">
+                  Verification OTP dispatched to <span className="font-bold">{forgotEmail}</span>. Code expires in{' '}
+                  <span className="font-mono font-bold text-rose-600">
+                    {Math.floor(forgotTimer / 60)}:{(forgotTimer % 60) < 10 ? '0' : ''}{forgotTimer % 60}
+                  </span>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700">Enter 6-Digit OTP</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      maxLength={6}
+                      value={forgotOtp}
+                      onChange={(e) => setForgotOtp(e.target.value.replace(/\D/g, ''))}
+                      placeholder="123456"
+                      required
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-center text-base tracking-widest font-mono font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSendForgotOtp}
+                      disabled={!forgotCanResend || isForgotLoading}
+                      className="px-3 py-2 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl disabled:opacity-40 whitespace-nowrap"
+                    >
+                      {forgotCanResend ? 'Resend' : `${forgotCooldown}s`}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700">New Password</label>
+                  <div className="relative">
+                    <input
+                      type={showForgotNewPass ? 'text' : 'password'}
+                      value={forgotNewPassword}
+                      onChange={(e) => setForgotNewPassword(e.target.value)}
+                      placeholder="Minimum 6 characters"
+                      required
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-3 pr-9 text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowForgotNewPass(!showForgotNewPass)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      {showForgotNewPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700">Confirm New Password</label>
+                  <div className="relative">
+                    <input
+                      type={showForgotConfirmPass ? 'text' : 'password'}
+                      value={forgotConfirmPassword}
+                      onChange={(e) => setForgotConfirmPassword(e.target.value)}
+                      placeholder="Re-enter password"
+                      required
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-3 pr-9 text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowForgotConfirmPass(!showForgotConfirmPass)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      {showForgotConfirmPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setForgotStep('email')}
+                    className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isForgotLoading || forgotTimer <= 0}
+                    className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl shadow-md cursor-pointer disabled:opacity-50"
+                  >
+                    {isForgotLoading ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Verifying...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Reset Password</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

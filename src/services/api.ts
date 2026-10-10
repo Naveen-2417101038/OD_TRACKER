@@ -157,6 +157,195 @@ export async function apiGetMe(token?: string): Promise<MeApiResponse> {
 }
 
 /**
+ * Change password using Current Password (Method A)
+ */
+export async function apiChangePassword(
+  currentPassword: string,
+  newPassword: string,
+  confirmPassword: string,
+  token?: string
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const storedToken = resolveStoredToken(token);
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (storedToken) {
+      headers['Authorization'] = `Bearer ${storedToken}`;
+    }
+
+    const res = await fetch(`${API_BASE}/auth/change-password`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        currentPassword,
+        newPassword,
+        confirmPassword,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error: data.error || data.message || 'Failed to update password.',
+      };
+    }
+    return {
+      success: true,
+      message: data.message || 'Password updated successfully.',
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: 'Unable to reach backend server. Please check your connection.',
+    };
+  }
+}
+
+/**
+ * Dispatch 6-digit OTP to user's registered email (Method B & Forgot Password)
+ */
+export async function apiSendOtp(
+  email?: string,
+  token?: string
+): Promise<{ success: boolean; message?: string; error?: string; email?: string }> {
+  try {
+    const storedToken = resolveStoredToken(token);
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (storedToken) {
+      headers['Authorization'] = `Bearer ${storedToken}`;
+    }
+
+    const res = await fetch(`${API_BASE}/auth/otp/send`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        email: email ? email.trim() : undefined,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error: data.error || data.message || 'Failed to send OTP code.',
+      };
+    }
+    return {
+      success: true,
+      message: data.message || 'Verification OTP dispatched to registered email.',
+      email: data.email,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: 'Unable to reach backend server. Please check your connection.',
+    };
+  }
+}
+
+/**
+ * Verify 6-digit OTP code
+ */
+export async function apiVerifyOtp(
+  otp: string,
+  email?: string,
+  token?: string
+): Promise<{ success: boolean; message?: string; resetToken?: string; error?: string }> {
+  try {
+    const storedToken = resolveStoredToken(token);
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (storedToken) {
+      headers['Authorization'] = `Bearer ${storedToken}`;
+    }
+
+    const res = await fetch(`${API_BASE}/auth/otp/verify`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        otp: otp.trim(),
+        email: email ? email.trim() : undefined,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error: data.error || data.message || 'Invalid or expired OTP code.',
+      };
+    }
+    return {
+      success: true,
+      message: data.message || 'OTP successfully verified.',
+      resetToken: data.resetToken,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: 'Unable to reach backend server. Please check your connection.',
+    };
+  }
+}
+
+/**
+ * Reset password via OTP or Reset Token (Method B)
+ */
+export async function apiResetPasswordOtp(payload: {
+  otp?: string;
+  resetToken?: string;
+  newPassword: string;
+  confirmPassword: string;
+  email?: string;
+  token?: string;
+}): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const storedToken = resolveStoredToken(payload.token);
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (storedToken) {
+      headers['Authorization'] = `Bearer ${storedToken}`;
+    }
+
+    const res = await fetch(`${API_BASE}/auth/otp/reset-password`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        otp: payload.otp ? payload.otp.trim() : undefined,
+        resetToken: payload.resetToken,
+        newPassword: payload.newPassword,
+        confirmPassword: payload.confirmPassword,
+        email: payload.email ? payload.email.trim() : undefined,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error: data.error || data.message || 'Failed to update password.',
+      };
+    }
+    return {
+      success: true,
+      message: data.message || 'Password successfully updated.',
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: 'Unable to reach backend server. Please check your connection.',
+    };
+  }
+}
+
+
+/**
  * Create a new OD Request via Flask backend POST /api/od-requests
  */
 export async function apiCreateODRequest(
