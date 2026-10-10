@@ -65,10 +65,10 @@ export const AdminAcademic: React.FC = () => {
   const handleOpenEdit = (item: any) => {
     setSelectedItem(item);
     setEditForm({
-      cgpa: item.cgpa || 8.0,
-      overall_attendance: item.overall_attendance || item.attendance || 85,
-      od_days_used: item.od_days_used || 0,
-      max_od_days: item.max_od_days || 12
+      cgpa: item.cgpa ?? 8.0,
+      overall_attendance: item.overall_attendance ?? item.attendance ?? 85,
+      od_days_used: item.od_days_used ?? 0,
+      max_od_days: item.max_od_days ?? 12
     });
     setIsEditOpen(true);
   };

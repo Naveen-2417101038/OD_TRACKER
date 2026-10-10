@@ -1,16 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Settings, Save, ShieldCheck, Bell, 
+  Settings, Save, ShieldCheck, Mail, 
   Calendar, CheckCircle2, AlertCircle, RefreshCw, 
-  Info, Sliders, Database, KeyRound
+  Info, Sliders, Database, KeyRound, Lock
 } from 'lucide-react';
 import { apiGetAdminSettings, apiUpdateAdminSettings } from '../../services/api';
 import { AdminSystemSettings } from '../../types/types';
 import { useToast } from '../../components/Toast';
+import { getAuthSession } from '../../data/mockData';
+import { ChangePasswordModal } from '../../components/ChangePasswordModal';
 
 export const AdminSettings: React.FC = () => {
   const { showToast } = useToast();
+  const session = getAuthSession();
 
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [settings, setSettings] = useState<AdminSystemSettings>({
     id: 'SYSTEM_CONFIG',
     min_attendance_percent: 75.0,
@@ -22,6 +26,7 @@ export const AdminSettings: React.FC = () => {
     sms_notifications_enabled: false,
     auto_escalate_hours: 48
   });
+
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -223,7 +228,7 @@ export const AdminSettings: React.FC = () => {
         {/* Section 3: Notification & Escalation Triggers */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm space-y-4">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-            <Bell className="w-4 h-4 text-amber-600" />
+            <Mail className="w-4 h-4 text-amber-600" />
             <h2 className="text-sm font-black text-slate-900 uppercase tracking-wider">
               3. Automated Notifications & Workflow Settings
             </h2>
@@ -258,6 +263,47 @@ export const AdminSettings: React.FC = () => {
           </div>
         </div>
 
+        {/* Section 4: Admin Credentials & Password Security */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <KeyRound className="w-4 h-4 text-amber-600" />
+              <h2 className="text-sm font-black text-slate-900 uppercase tracking-wider">
+                4. Administrator Credentials & Account Security
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsChangePasswordOpen(true)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-sm shadow-amber-600/20 cursor-pointer"
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>Change Admin Password</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+              <p className="font-bold text-slate-800 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-primary-600" />
+                <span>Method A: Current Password</span>
+              </p>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Change password immediately by providing current credentials.
+              </p>
+            </div>
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+              <p className="font-bold text-slate-800 flex items-center gap-1.5">
+                <Mail className="w-3.5 h-3.5 text-amber-600" />
+                <span>Method B: Email OTP Verification</span>
+              </p>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Dispatch a 6-digit OTP code to registered admin inbox ({session?.email || 'admin@rajalakshmi.edu.in'}).
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* Save Bar */}
         <div className="flex items-center justify-end gap-3 pt-2">
           <button
@@ -279,6 +325,14 @@ export const AdminSettings: React.FC = () => {
 
       </form>
 
+      {/* Admin Change Password Modal */}
+      <ChangePasswordModal
+        isOpen={isChangePasswordOpen}
+        onClose={() => setIsChangePasswordOpen(false)}
+        userEmail={session?.email}
+      />
+
     </div>
   );
 };
+

@@ -535,6 +535,39 @@ def update_student(student_id):
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     updates = {'updated_at': now_str}
 
+    # 1. Email Update & Uniqueness
+    if 'email' in data and data['email'] is not None:
+        raw_email = str(data['email']).strip().lower()
+        if raw_email and raw_email != target.get('email'):
+            existing_with_email = UserModel.get_by_email(raw_email)
+            if existing_with_email and existing_with_email.get('id') != target.get('id'):
+                return jsonify({
+                    'success': False,
+                    'error': f"The email address '{raw_email}' is already registered to another user."
+                }), 409
+            updates['email'] = raw_email
+
+    # 2. Identifier Update & Uniqueness
+    raw_ident = data.get('identifier') or data.get('register_number') or data.get('registerNumber')
+    if raw_ident is not None and str(raw_ident).strip():
+        new_ident = str(raw_ident).strip().upper()
+        if new_ident != (target.get('identifier') or '').upper():
+            existing_with_ident = UserModel.get_by_identifier(new_ident)
+            if existing_with_ident and existing_with_ident.get('id') != target.get('id'):
+                return jsonify({
+                    'success': False,
+                    'error': f"The Register Number '{new_ident}' is already taken by another user."
+                }), 409
+            updates['identifier'] = new_ident
+
+    # 3. Password Update
+    if 'password' in data and data['password'] is not None:
+        new_pwd = str(data['password']).strip()
+        if new_pwd:
+            if len(new_pwd) < 6:
+                return jsonify({'success': False, 'error': 'Password must be at least 6 characters long.'}), 400
+            updates['password_hash'] = generate_password_hash(new_pwd)
+
     if 'name' in data and data['name'].strip():
         updates['name'] = data['name'].strip()
     if 'phone' in data:

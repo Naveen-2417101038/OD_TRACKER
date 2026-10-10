@@ -162,7 +162,7 @@ export const AdminDashboard: React.FC = () => {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full min-w-0">
       
       {/* Top Banner & Quick Controls */}
       <div className="bg-gradient-to-r from-slate-900 via-zinc-900 to-amber-950 rounded-3xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
@@ -170,9 +170,9 @@ export const AdminDashboard: React.FC = () => {
         
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
           <div>
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold mb-3">
-              <Sparkles className="w-3.5 h-3.5" />
-              System Executive Dashboard
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold mb-3 whitespace-nowrap shrink-0">
+              <Sparkles className="w-3.5 h-3.5 shrink-0" />
+              <span>System Executive Dashboard</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
               Institutional OD Overview
@@ -182,14 +182,14 @@ export const AdminDashboard: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 shrink-0 flex-wrap sm:flex-nowrap">
             <button
               type="button"
               onClick={handleRefresh}
               disabled={refreshing}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-bold transition-all backdrop-blur-sm cursor-pointer"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-bold transition-all backdrop-blur-sm cursor-pointer shrink-0 whitespace-nowrap"
             >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 shrink-0 ${refreshing ? 'animate-spin' : ''}`} />
               <span>Refresh Metrics</span>
             </button>
             <Link
@@ -206,36 +206,36 @@ export const AdminDashboard: React.FC = () => {
       {/* 9 Summary Cards Grid */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-extrabold uppercase tracking-wider text-slate-700">
+          <h2 className="text-sm font-extrabold uppercase tracking-wider text-slate-700 whitespace-nowrap">
             System Key Performance Indicators
           </h2>
-          <span className="text-xs text-slate-400 font-semibold">Live Database Records</span>
+          <span className="text-xs text-slate-400 font-semibold whitespace-nowrap">Live Database Records</span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))]">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {statCards.map((card, idx) => {
             const Icon = card.icon;
             return (
               <Link
                 key={idx}
                 to={card.link}
-                className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm hover:shadow-md hover:border-amber-400/60 transition-all group flex flex-col justify-between"
+                className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm hover:shadow-md hover:border-amber-400/60 transition-all group flex flex-col justify-between min-w-0"
               >
                 <div className="flex items-start justify-between">
-                  <div className={`p-3 rounded-xl ${card.bgColor} ${card.textColor}`}>
+                  <div className={`p-3 rounded-xl ${card.bgColor} ${card.textColor} shrink-0`}>
                     <Icon className="w-5 h-5" />
                   </div>
-                  <span className="text-slate-400 group-hover:text-amber-600 transition-colors">
+                  <span className="text-slate-400 group-hover:text-amber-600 transition-colors shrink-0">
                     <ArrowUpRight className="w-4 h-4" />
                   </span>
                 </div>
 
-                <div className="mt-4">
-                  <p className="text-xs font-semibold text-slate-500">{card.title}</p>
-                  <p className="text-2xl font-black text-slate-900 tracking-tight mt-0.5">
+                <div className="mt-4 min-w-0">
+                  <p className="text-xs font-semibold text-slate-500 whitespace-nowrap truncate">{card.title}</p>
+                  <p className="text-2xl font-black text-slate-900 tracking-tight mt-0.5 whitespace-nowrap">
                     {card.value}
                   </p>
-                  <p className="text-[11px] text-slate-400 mt-1 font-medium">{card.subtitle}</p>
+                  <p className="text-[11px] text-slate-400 mt-1 font-medium leading-relaxed">{card.subtitle}</p>
                 </div>
               </Link>
             );
@@ -339,7 +339,7 @@ export const AdminDashboard: React.FC = () => {
           </div>
 
           <div className="overflow-x-auto mt-4">
-            <table className="w-full text-left text-xs">
+            <table className="w-full text-left text-xs min-w-[550px]">
               <thead>
                 <tr className="border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
                   <th className="py-2.5 px-3">Student</th>

@@ -2,20 +2,23 @@ import React, { useState, useEffect } from 'react';
 import { getStudentProfile, saveStudentProfile } from '../data/mockData';
 import { Student } from '../types/types';
 import { Card } from '../components/Card';
-import { User, Phone, Mail, Award, BookOpen, Shield, Edit2, CheckCircle } from 'lucide-react';
+import { User, Phone, Mail, Award, BookOpen, Shield, Edit2, CheckCircle, KeyRound, Lock, ShieldCheck } from 'lucide-react';
 import { useToast } from '../components/Toast';
+import { ChangePasswordModal } from '../components/ChangePasswordModal';
 
 export const Profile: React.FC = () => {
   const { showToast } = useToast();
   
   const [student, setStudent] = useState<Student | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     name: '',
     email: '',
     phone: '',
     profilePhoto: '',
   });
+
 
   const loadData = () => {
     const data = getStudentProfile();
@@ -251,6 +254,58 @@ export const Profile: React.FC = () => {
         </Card>
 
       </div>
+
+      {/* Account Security & Password Management Card */}
+      <Card className="p-6 border border-slate-200">
+        <div className="flex items-center justify-between flex-wrap gap-4 pb-4 border-b border-slate-100">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-amber-50 rounded-xl text-amber-600 border border-amber-200">
+              <KeyRound className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-800">Account Security & Password</h3>
+              <p className="text-xs text-slate-400">Manage your institutional account authentication credentials</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsChangePasswordOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-sm shadow-amber-600/20 cursor-pointer"
+          >
+            <KeyRound className="w-4 h-4" />
+            <span>Change Password</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 text-xs">
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+            <div className="flex items-center gap-2 font-bold text-slate-800">
+              <Lock className="w-4 h-4 text-primary-600" />
+              <span>Method A: Current Password</span>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Verify your active password and set a new password of at least 6 characters. Instant security confirmation delivered to email.
+            </p>
+          </div>
+
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
+            <div className="flex items-center gap-2 font-bold text-slate-800">
+              <Mail className="w-4 h-4 text-amber-600" />
+              <span>Method B: Email OTP Verification</span>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Dispatch a 6-digit cryptographically secure OTP to your registered college email ({student?.email}). Valid for 5 minutes.
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      {/* Change Password Modal */}
+      <ChangePasswordModal
+        isOpen={isChangePasswordOpen}
+        onClose={() => setIsChangePasswordOpen(false)}
+        userEmail={student?.email}
+      />
 
     </div>
   );

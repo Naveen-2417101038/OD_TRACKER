@@ -360,18 +360,23 @@ def get_my_academic_details():
     c1 = acad.get('cat1_marks') if acad else active_user.get('cat1_marks')
     c2 = acad.get('cat2_marks') if acad else active_user.get('cat2_marks')
     c3 = acad.get('cat3_marks') if acad else active_user.get('cat3_marks')
+    cg = acad.get('cgpa') if acad else active_user.get('cgpa')
 
     has_any_mark = c1 is not None or c2 is not None or c3 is not None or att is not None
 
     acad_payload = {
         'student_id': sid,
         'register_number': reg_no,
+        'register_no': reg_no,
         'student_name': current_user.get('name'),
         'name': current_user.get('name'),
         'department': current_user.get('department'),
         'year': current_user.get('year'),
         'section': current_user.get('section'),
+        'cgpa': round(float(cg), 2) if cg is not None else None,
         'attendance_percentage': round(float(att), 1) if att is not None else None,
+        'attendance': round(float(att), 1) if att is not None else None,
+        'overall_attendance': round(float(att), 1) if att is not None else None,
         'cat1_marks': round(float(c1), 1) if c1 is not None else None,
         'cat2_marks': round(float(c2), 1) if c2 is not None else None,
         'cat3_marks': round(float(c3), 1) if c3 is not None else None,
@@ -383,6 +388,7 @@ def get_my_academic_details():
 
     return jsonify({
         'success': True,
+        'data': acad_payload,
         'academic': acad_payload,
         **acad_payload
     }), 200

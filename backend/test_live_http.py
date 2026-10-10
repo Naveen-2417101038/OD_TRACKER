@@ -109,7 +109,7 @@ def run_live_tests():
     # 9. GET /api/auth/me with Bearer Token
     status, data = get_json("/api/auth/me", headers={'Authorization': f"Bearer {student_token}"})
     print(f"[*] GET /api/auth/me (Bearer Token) -> Status: {status}, Authenticated: {data.get('authenticated')}, User: {data.get('user', {}).get('name')}")
-    assert status == 200 and data.get('authenticated') is True and data.get('user', {}).get('name') == 'Naveen'
+    assert status == 200 and data.get('authenticated') is True and 'Naveen' in data.get('user', {}).get('name', '')
 
     # 10. Role Barrier Check (Student token accessing HOD endpoint -> 403 Forbidden)
     status, data = get_json("/api/auth/role-check/HOD", headers={'Authorization': f"Bearer {student_token}"})

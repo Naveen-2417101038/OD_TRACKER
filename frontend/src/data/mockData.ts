@@ -89,6 +89,51 @@ export const initialStudent: Student = {
   cgpa: 8.92,
 };
 
+export const initialDemoStudents: Array<{ student: Student; password: string }> = [
+  {
+    student: initialStudent,
+    password: 'password123',
+  },
+  {
+    student: {
+      name: 'Priya S',
+      registerNumber: '23CSD002',
+      department: 'Computer Science and Design',
+      year: 'III Year',
+      section: 'A',
+      email: 'priya.23csd@rajalakshmi.edu.in',
+      phone: '+91 98765 43211',
+      mentor: 'Dr. A. Rajesh (ASP/CSD)',
+      mentorId: 'FAC001',
+      classIncharge: 'Mrs. K. Shanthi (AP/CSD)',
+      classInchargeId: 'FAC002',
+      profilePhoto: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=250&h=250&q=80',
+      attendancePercent: 92.1,
+      cgpa: 9.15,
+    },
+    password: 'password123',
+  },
+  {
+    student: {
+      name: 'Karthik R',
+      registerNumber: '23CSD003',
+      department: 'Computer Science and Design',
+      year: 'III Year',
+      section: 'B',
+      email: 'karthik.23csd@rajalakshmi.edu.in',
+      phone: '+91 98765 43212',
+      mentor: 'Dr. A. Rajesh (ASP/CSD)',
+      mentorId: 'FAC001',
+      classIncharge: 'Mrs. K. Shanthi (AP/CSD)',
+      classInchargeId: 'FAC002',
+      profilePhoto: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=250&h=250&q=80',
+      attendancePercent: 74.2,
+      cgpa: 7.85,
+    },
+    password: 'password123',
+  }
+];
+
 // 3. Class Students Roster for Class Incharge
 export const initialClassStudents: ClassStudentInfo[] = [
   {
@@ -503,29 +548,8 @@ export const initialCertificates: CertificateItem[] = [
 // ==========================================
 
 export const initializeDatabase = (): void => {
-  if (!localStorage.getItem(KEYS.STUDENT)) {
-    localStorage.setItem(KEYS.STUDENT, JSON.stringify(initialStudent));
-  }
   if (!localStorage.getItem(KEYS.FACULTY)) {
     localStorage.setItem(KEYS.FACULTY, JSON.stringify(initialFaculty));
-  }
-  if (!localStorage.getItem(KEYS.REQUESTS)) {
-    localStorage.setItem(KEYS.REQUESTS, JSON.stringify(initialRequests));
-  }
-  if (!localStorage.getItem(KEYS.ATTENDANCE)) {
-    localStorage.setItem(KEYS.ATTENDANCE, JSON.stringify(initialAttendance));
-  }
-  if (!localStorage.getItem(KEYS.MARKS)) {
-    localStorage.setItem(KEYS.MARKS, JSON.stringify(initialMarks));
-  }
-  if (!localStorage.getItem(KEYS.CERTIFICATES)) {
-    localStorage.setItem(KEYS.CERTIFICATES, JSON.stringify(initialCertificates));
-  }
-  if (!localStorage.getItem(KEYS.NOTIFICATIONS)) {
-    localStorage.setItem(KEYS.NOTIFICATIONS, JSON.stringify(initialNotifications));
-  }
-  if (!localStorage.getItem(KEYS.FACULTY_NOTIFICATIONS)) {
-    localStorage.setItem(KEYS.FACULTY_NOTIFICATIONS, JSON.stringify(initialFacultyNotifications));
   }
   if (!localStorage.getItem(KEYS.CLASS_STUDENTS)) {
     localStorage.setItem(KEYS.CLASS_STUDENTS, JSON.stringify(initialClassStudents));
@@ -538,7 +562,7 @@ export const initializeDatabase = (): void => {
 
 export const getAuthSession = (): AuthSession | null => {
   try {
-    const raw = localStorage.getItem(KEYS.AUTH_SESSION);
+    const raw = localStorage.getItem(KEYS.AUTH_SESSION) || localStorage.getItem('od_track_auth_session_v2');
     if (!raw) return null;
     return JSON.parse(raw);
   } catch {
@@ -547,10 +571,16 @@ export const getAuthSession = (): AuthSession | null => {
 };
 
 export const setAuthSession = (session: AuthSession): void => {
-  localStorage.setItem(KEYS.AUTH_SESSION, JSON.stringify(session));
+  const jsonStr = JSON.stringify(session);
+  localStorage.setItem(KEYS.AUTH_SESSION, jsonStr);
+  localStorage.setItem('od_track_auth_session_v2', jsonStr);
+  localStorage.setItem('od_auth_session', jsonStr);
+  localStorage.setItem('od_current_user', jsonStr);
+
   if (session.role === 'Student') {
     localStorage.setItem(KEYS.STUDENT_LOGGED_IN, 'true');
     localStorage.removeItem(KEYS.FACULTY_LOGGED_IN);
+    localStorage.removeItem(KEYS.CURRENT_FACULTY);
   } else {
     localStorage.setItem(KEYS.FACULTY_LOGGED_IN, 'true');
     localStorage.removeItem(KEYS.STUDENT_LOGGED_IN);
@@ -564,14 +594,30 @@ export const setAuthSession = (session: AuthSession): void => {
 
 export const clearAuthSession = (): void => {
   try {
-    fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
   } catch {
     // Ignore network error on logout
   }
+
+  // Authoritatively purge all authenticated sessions and user-specific cached state
   localStorage.removeItem(KEYS.AUTH_SESSION);
+  localStorage.removeItem('od_track_auth_session_v2');
+  localStorage.removeItem('od_auth_session');
+  localStorage.removeItem('od_current_user');
   localStorage.removeItem(KEYS.STUDENT_LOGGED_IN);
   localStorage.removeItem(KEYS.FACULTY_LOGGED_IN);
+  localStorage.removeItem(KEYS.STUDENT);
+  localStorage.removeItem(KEYS.CURRENT_FACULTY);
+  localStorage.removeItem(KEYS.REQUESTS);
+  localStorage.removeItem(KEYS.ATTENDANCE);
+  localStorage.removeItem(KEYS.MARKS);
+  localStorage.removeItem(KEYS.CERTIFICATES);
+  localStorage.removeItem(KEYS.NOTIFICATIONS);
+  localStorage.removeItem(KEYS.FACULTY_NOTIFICATIONS);
+  sessionStorage.clear();
+
   window.dispatchEvent(new CustomEvent('odAuthStateChanged'));
+  window.dispatchEvent(new CustomEvent('odStateUpdated'));
 };
 
 export const authenticateUser = (
@@ -602,57 +648,54 @@ export const authenticateUser = (
     return null;
   }
 
-  // 1. Check Student match
-  const student = getStudentProfile();
-  const isStudentMatch = 
-    cleanId === student.registerNumber.toUpperCase() || 
-    cleanId === '23CSD001' || 
-    cleanId === student.email.toUpperCase() ||
-    cleanId.startsWith('23CSD') ||
-    cleanId.startsWith('22CSD');
+  // 1. Strict Student Match — Each account authenticates with its own registered credentials
+  const matchedStudentDemo = initialDemoStudents.find(
+    ds => ds.student.registerNumber.toUpperCase() === cleanId ||
+          ds.student.email.toUpperCase() === cleanId
+  );
 
-  if (isStudentMatch && (!role || role === 'Student')) {
-    if (cleanPass === 'password123' || cleanPass.length >= 6) {
+  if (matchedStudentDemo && (!role || role === 'Student')) {
+    if (cleanPass === matchedStudentDemo.password) {
+      const s = matchedStudentDemo.student;
       const session: AuthSession = {
-        userId: student.registerNumber,
-        name: student.name,
+        userId: s.registerNumber,
+        name: s.name,
         role: 'Student',
-        email: student.email,
-        department: student.department,
-        year: student.year,
-        section: student.section,
-        avatar: student.profilePhoto,
-        token: `jwt_student_${Date.now()}`,
+        email: s.email,
+        department: s.department,
+        year: s.year,
+        section: s.section,
+        avatar: s.profilePhoto,
+        token: `jwt_student_${s.registerNumber}_${Date.now()}`,
         loginTime: new Date().toISOString(),
       };
+
+      // Isolate student profile in local storage
+      localStorage.setItem(KEYS.STUDENT, JSON.stringify(s));
+      localStorage.removeItem(KEYS.REQUESTS);
+      localStorage.removeItem(KEYS.ATTENDANCE);
+      localStorage.removeItem(KEYS.MARKS);
+      localStorage.removeItem(KEYS.CERTIFICATES);
+      localStorage.removeItem(KEYS.NOTIFICATIONS);
+
       setAuthSession(session);
       return session;
     }
+    // Explicit password rejection
+    return null;
   }
 
-  // 2. Check Faculty match (Mentor, Class Incharge, HOD)
+  // 2. Strict Faculty Match (Mentor, Class Incharge, HOD)
   const faculties = getFacultyList();
   let matchedFaculty = faculties.find(
     f => (f.faculty_id.toUpperCase() === cleanId || 
          f.employee_id.toUpperCase() === cleanId || 
-         f.email.toUpperCase() === cleanId || 
-         (cleanId === 'HOD-CSD-01' && f.role === 'HOD')) &&
+         f.email.toUpperCase() === cleanId) &&
          (!role || f.role === role)
   );
 
-  // If not matched by exact ID and no role passed, check common aliases/names
-  if (!matchedFaculty && !role) {
-    if (cleanId === 'FAC001' || cleanId.includes('RAJESH') || cleanId.includes('MENTOR')) {
-      matchedFaculty = faculties.find(f => f.role === 'Mentor');
-    } else if (cleanId === 'FAC002' || cleanId.includes('SHANTHI') || cleanId.includes('INCHARGE')) {
-      matchedFaculty = faculties.find(f => f.role === 'Class Incharge');
-    } else if (cleanId === 'FAC004' || cleanId.includes('KARPAGAM') || cleanId.includes('HOD')) {
-      matchedFaculty = faculties.find(f => f.role === 'HOD');
-    }
-  }
-
   if (matchedFaculty) {
-    if (matchedFaculty.password === cleanPass || cleanPass === 'password123' || cleanPass.length >= 6) {
+    if (matchedFaculty.password === cleanPass || cleanPass === 'password123') {
       const session: AuthSession = {
         userId: matchedFaculty.faculty_id,
         name: matchedFaculty.name,
@@ -667,18 +710,18 @@ export const authenticateUser = (
       setAuthSession(session);
       return session;
     }
+    return null;
   }
 
-  // 3. Check Administrator match
+  // 3. Strict Administrator Match
   const isAdminMatch = 
     cleanId === 'ADMIN@RAJALAKSHMI.EDU.IN' ||
     cleanId === 'ADMIN' ||
     cleanId === 'ADM001' ||
-    cleanId.includes('ADMIN') ||
-    role === 'Admin';
+    cleanId === 'ADMIN-001';
 
   if (isAdminMatch && (!role || role === 'Admin')) {
-    if (cleanPass === 'password123' || cleanPass.length >= 6) {
+    if (cleanPass === 'password123' || cleanPass === 'admin123') {
       const session: AuthSession = {
         userId: 'ADM001',
         name: 'Super Administrator',
@@ -692,6 +735,7 @@ export const authenticateUser = (
       setAuthSession(session);
       return session;
     }
+    return null;
   }
 
   return null;
@@ -700,19 +744,25 @@ export const authenticateUser = (
 export const switchPersona = (role: UserRole): AuthSession => {
   initializeDatabase();
   if (role === 'Student') {
-    const student = getStudentProfile();
+    const s = initialDemoStudents[0].student;
     const session: AuthSession = {
-      userId: student.registerNumber,
-      name: student.name,
+      userId: s.registerNumber,
+      name: s.name,
       role: 'Student',
-      email: student.email,
-      department: student.department,
-      year: student.year,
-      section: student.section,
-      avatar: student.profilePhoto,
-      token: `jwt_student_${Date.now()}`,
+      email: s.email,
+      department: s.department,
+      year: s.year,
+      section: s.section,
+      avatar: s.profilePhoto,
+      token: `jwt_student_${s.registerNumber}_${Date.now()}`,
       loginTime: new Date().toISOString(),
     };
+    localStorage.setItem(KEYS.STUDENT, JSON.stringify(s));
+    localStorage.removeItem(KEYS.REQUESTS);
+    localStorage.removeItem(KEYS.ATTENDANCE);
+    localStorage.removeItem(KEYS.MARKS);
+    localStorage.removeItem(KEYS.CERTIFICATES);
+    localStorage.removeItem(KEYS.NOTIFICATIONS);
     setAuthSession(session);
     return session;
   } else if (role === 'Admin') {
@@ -768,20 +818,25 @@ export const authenticateUserAsync = async (
     role = undefined;
   }
 
-  // 1. Try authenticating against Flask backend
+  // 1. Authenticate against Flask backend authoritative database
   try {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ identifier, password, role }),
     });
     const data = await res.json().catch(() => ({}));
+
     if (res.ok && data.success && data.user) {
       const u = data.user;
+      const userRole = (data.role || u.role) as UserRole;
+      const regNo = u.identifier || u.registerNumber || u.userId || identifier;
+
       const session: AuthSession = {
-        userId: u.id || u.userId || identifier,
+        userId: regNo,
         name: u.name,
-        role: (data.role || u.role) as UserRole,
+        role: userRole,
         email: u.email,
         department: u.department,
         year: u.year,
@@ -790,22 +845,51 @@ export const authenticateUserAsync = async (
         token: data.token,
         loginTime: new Date().toISOString(),
       };
+
+      // Wipe any lingering cached data from previous logins
+      localStorage.removeItem(KEYS.REQUESTS);
+      localStorage.removeItem(KEYS.ATTENDANCE);
+      localStorage.removeItem(KEYS.MARKS);
+      localStorage.removeItem(KEYS.CERTIFICATES);
+      localStorage.removeItem(KEYS.NOTIFICATIONS);
+
+      if (userRole === 'Student') {
+        const studentProfile: Student = {
+          name: u.name,
+          registerNumber: regNo,
+          department: u.department || 'Computer Science and Design',
+          year: u.year || 'III Year',
+          section: u.section || 'A',
+          email: u.email,
+          phone: u.phone || '',
+          mentor: u.mentor || 'Dr. A. Rajesh (ASP/CSD)',
+          mentorId: u.mentor_id || u.mentorId || 'FAC001',
+          classIncharge: u.class_incharge || u.classIncharge || 'Mrs. K. Shanthi (AP/CSD)',
+          classInchargeId: u.class_incharge_id || u.classInchargeId || 'FAC002',
+          profilePhoto: u.avatar || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=250&h=250&q=80',
+          attendancePercent: u.attendance_percentage,
+          cgpa: u.cgpa,
+        };
+        localStorage.setItem(KEYS.STUDENT, JSON.stringify(studentProfile));
+      }
+
       setAuthSession(session);
       return {
         session,
         dashboardUrl: data.dashboardUrl || getRoleDashboardPath(session.role),
       };
-    } else if (res.status === 401 && data.error) {
+    } else if ((res.status === 401 || res.status === 400 || res.status === 403) && data.error) {
+      // Backend returned explicit credential/permission rejection: DO NOT fall back to local mock
       return {
         session: null,
         error: data.error,
       };
     }
   } catch {
-    // Fallback to local simulation if backend unavailable
+    // Only fall back to local demo authentication if backend is completely unreachable
   }
 
-  // 2. Fallback to local authentication
+  // 2. Offline Fallback to Local Authentication
   const session = authenticateUser(role ?? (roleOrId as UserRole), identifier, password);
 
   if (session) {
@@ -817,7 +901,7 @@ export const authenticateUserAsync = async (
 
   return {
     session: null,
-    error: 'Invalid credentials. Please check your ID and password.',
+    error: 'Invalid credentials. Please verify your Register Number / ID and Password.',
   };
 };
 
@@ -989,8 +1073,53 @@ export const logoutFaculty = (): void => {
 // ==========================================
 
 export const getStudentProfile = (): Student => {
-  initializeDatabase();
-  return JSON.parse(localStorage.getItem(KEYS.STUDENT) || '{}');
+  const session = getAuthSession();
+  const raw = localStorage.getItem(KEYS.STUDENT);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && (parsed.registerNumber || parsed.name)) {
+        if (!session || session.role !== 'Student' || 
+            (parsed.registerNumber && session.userId && parsed.registerNumber.toUpperCase() === session.userId.toUpperCase()) ||
+            (parsed.email && session.email && parsed.email.toLowerCase() === session.email.toLowerCase())) {
+          return parsed;
+        }
+      }
+    } catch {}
+  }
+
+  // If a student session is active, construct student profile from active session
+  if (session && session.role === 'Student') {
+    const studentProfile: Student = {
+      name: session.name || 'Student',
+      registerNumber: session.userId || '',
+      department: session.department || 'Computer Science and Design',
+      year: session.year || 'III Year',
+      section: session.section || 'A',
+      email: session.email || '',
+      phone: '',
+      mentor: 'Dr. A. Rajesh (ASP/CSD)',
+      mentorId: 'FAC001',
+      classIncharge: 'Mrs. K. Shanthi (AP/CSD)',
+      classInchargeId: 'FAC002',
+      profilePhoto: session.avatar || 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=250&h=250&q=80',
+    };
+    localStorage.setItem(KEYS.STUDENT, JSON.stringify(studentProfile));
+    return studentProfile;
+  }
+
+  return {
+    name: '',
+    registerNumber: '',
+    department: '',
+    year: '',
+    section: '',
+    email: '',
+    phone: '',
+    mentor: '',
+    classIncharge: '',
+    profilePhoto: ''
+  };
 };
 
 export const saveStudentProfile = (student: Student): void => {
@@ -1012,44 +1141,50 @@ export const getClassStudents = (): ClassStudentInfo[] => {
 // ==========================================
 
 export const getODRequests = (): ODRequest[] => {
-  initializeDatabase();
-  const reqs: ODRequest[] = JSON.parse(localStorage.getItem(KEYS.REQUESTS) || '[]');
-  const now = new Date();
-  let updated = false;
+  const raw = localStorage.getItem(KEYS.REQUESTS);
+  if (!raw) return [];
+  try {
+    const reqs: ODRequest[] = JSON.parse(raw);
+    if (!Array.isArray(reqs)) return [];
 
-  for (const req of reqs) {
-    if (
-      (req.status === 'HOD Approved - Certificate Pending' || req.status === 'HOD Approved') &&
-      req.certificateStatus !== 'Verified' &&
-      req.certificateStatus !== 'Pending Verification'
-    ) {
-      // Calculate deadline if not already saved
-      let deadline: Date | null = req.certificateDeadline ? new Date(req.certificateDeadline) : null;
-      if (!deadline || isNaN(deadline.getTime())) {
-        const toDateStr = req.toDate || req.fromDate || req.eventDate;
-        const toTimeStr = req.toTime || '17:00';
-        const eventEnd = new Date(`${toDateStr}T${toTimeStr}:00`);
-        if (!isNaN(eventEnd.getTime())) {
-          deadline = new Date(eventEnd.getTime() + 24 * 60 * 60 * 1000);
+    const now = new Date();
+    let updated = false;
+
+    for (const req of reqs) {
+      if (
+        (req.status === 'HOD Approved - Certificate Pending' || req.status === 'HOD Approved') &&
+        req.certificateStatus !== 'Verified' &&
+        req.certificateStatus !== 'Pending Verification'
+      ) {
+        let deadline: Date | null = req.certificateDeadline ? new Date(req.certificateDeadline) : null;
+        if (!deadline || isNaN(deadline.getTime())) {
+          const toDateStr = req.toDate || req.fromDate || req.eventDate;
+          const toTimeStr = req.toTime || '17:00';
+          const eventEnd = new Date(`${toDateStr}T${toTimeStr}:00`);
+          if (!isNaN(eventEnd.getTime())) {
+            deadline = new Date(eventEnd.getTime() + 24 * 60 * 60 * 1000);
+          }
+        }
+
+        if (deadline && !isNaN(deadline.getTime()) && now > deadline) {
+          req.status = 'Rejected';
+          req.approvalStage = 'Rejected';
+          req.certificateStatus = 'Deadline Expired';
+          req.rejectionReason = 'OD rejected because the required certificate was not uploaded within 24 hours after the event ended.';
+          req.remarks = req.rejectionReason;
+          updated = true;
         }
       }
-
-      if (deadline && !isNaN(deadline.getTime()) && now > deadline) {
-        req.status = 'Rejected';
-        req.approvalStage = 'Rejected';
-        req.certificateStatus = 'Deadline Expired';
-        req.rejectionReason = 'OD rejected because the required certificate was not uploaded within 24 hours after the event ended.';
-        req.remarks = req.rejectionReason;
-        updated = true;
-      }
     }
-  }
 
-  if (updated) {
-    localStorage.setItem(KEYS.REQUESTS, JSON.stringify(reqs));
-  }
+    if (updated) {
+      localStorage.setItem(KEYS.REQUESTS, JSON.stringify(reqs));
+    }
 
-  return reqs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return reqs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
 };
 
 export const getODRequestById = (id: string): ODRequest | undefined => {
@@ -1067,17 +1202,10 @@ export const syncODRequestsFromBackend = async (): Promise<ODRequest[]> => {
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.requests)) {
-          const localReqs: ODRequest[] = JSON.parse(localStorage.getItem(KEYS.REQUESTS) || '[]');
-          // Merge backend requests with local requests
-          const merged = [...data.requests];
-          for (const lr of localReqs) {
-            if (!merged.find(m => m.id === lr.id)) {
-              merged.push(lr);
-            }
-          }
-          localStorage.setItem(KEYS.REQUESTS, JSON.stringify(merged));
+          // Authoritatively store only this authenticated student's backend OD requests
+          localStorage.setItem(KEYS.REQUESTS, JSON.stringify(data.requests));
           window.dispatchEvent(new CustomEvent('odStateUpdated'));
-          return merged;
+          return data.requests;
         }
       }
     } catch {

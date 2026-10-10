@@ -69,3 +69,12 @@ class Config:
     ENV = os.environ.get('FLASK_ENV', 'development')
     DEBUG = ENV == 'development'
     TESTING = False
+
+    # ── Email / SMTP Configuration ────────────────────────────────────────────
+    SMTP_HOST = os.environ.get('SMTP_HOST', '')
+    SMTP_PORT = int(os.environ.get('SMTP_PORT', 587))
+    SMTP_EMAIL = os.environ.get('SMTP_EMAIL', os.environ.get('SMTP_USERNAME', ''))
+    SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD', '')
+    MAIL_DEFAULT_SENDER = os.environ.get('MAIL_DEFAULT_SENDER', os.environ.get('SMTP_FROM_EMAIL', 'noreply@rajalakshmi.edu.in'))
+    SMTP_USE_TLS = os.environ.get('SMTP_USE_TLS', 'true').lower() in ('true', '1', 'yes')
+    APP_BASE_URL = os.environ.get('APP_BASE_URL', 'http://localhost:5173')
