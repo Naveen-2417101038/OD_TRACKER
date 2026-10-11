@@ -508,18 +508,17 @@ def init_db():
             existing_acad = acad_col.find_one({"student_id": acad_data['student_id']})
             if not existing_acad:
                 acad_col.insert_one(acad_data)
-
-            # Sync academic data into user doc
-            users.update_one(
-                {"id": acad_data['student_id']},
-                {"$set": {
-                    "attendance_percentage": acad_data['attendance_percentage'],
-                    "cat1_marks": acad_data['cat1_marks'],
-                    "cat2_marks": acad_data['cat2_marks'],
-                    "cat3_marks": acad_data['cat3_marks'],
-                    "last_academic_update": acad_data['updated_at']
-                }}
-            )
+                # Sync academic data into user doc only on initial seeding
+                users.update_one(
+                    {"id": acad_data['student_id']},
+                    {"$set": {
+                        "attendance_percentage": acad_data['attendance_percentage'],
+                        "cat1_marks": acad_data['cat1_marks'],
+                        "cat2_marks": acad_data['cat2_marks'],
+                        "cat3_marks": acad_data['cat3_marks'],
+                        "last_academic_update": acad_data['updated_at']
+                    }}
+                )
 
         print("[+] MongoDB Atlas: Verified stakeholder seed accounts and academic records.")
         return True

@@ -1,6 +1,6 @@
 import os
 import sys
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 # Ensure project root is present in sys.path
@@ -80,9 +80,37 @@ def create_app(config_class=Config):
     def student_academic_proxy(student_id):
         return get_student_academic_detail(student_id)
 
-    # Root status endpoint
-    @app.route('/')
-    def index():
+    # Frontend compiled distribution directory (built by Vite)
+    frontend_dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist'))
+
+    # Serve compiled static frontend assets (/assets/*)
+    @app.route('/assets/<path:filename>')
+    def serve_frontend_assets(filename):
+        assets_dir = os.path.join(frontend_dist_dir, 'assets')
+        if os.path.exists(os.path.join(assets_dir, filename)):
+            return send_from_directory(assets_dir, filename)
+        return jsonify({"success": False, "error": "Static asset not found."}), 404
+
+    # Serve React SPA index and root-level static assets (e.g. favicon.ico, images)
+    @app.route('/', defaults={'path': ''})
+    @app.route('/<path:path>')
+    def serve_frontend_spa(path):
+        # API routes are registered on /api/*; do not intercept if somehow caught here
+        if path.startswith('api/') or path == 'api':
+            return jsonify({"success": False, "error": f"API endpoint '/{path}' not found."}), 404
+
+        # If a specific static file exists in frontend/dist, serve it
+        if path:
+            candidate_file = os.path.join(frontend_dist_dir, path)
+            if os.path.isfile(candidate_file):
+                return send_from_directory(frontend_dist_dir, path)
+
+        # For all client-side routes, serve index.html if frontend is built
+        index_file = os.path.join(frontend_dist_dir, 'index.html')
+        if os.path.exists(index_file):
+            return send_from_directory(frontend_dist_dir, 'index.html')
+
+        # Fallback root API message if frontend build is not present (e.g. purely backend dev)
         status = MongoDB.get_status()
         return jsonify({
             "message": "OD Tracking System Backend API is active.",
@@ -113,6 +141,11 @@ def create_app(config_class=Config):
 
     @app.errorhandler(404)
     def handle_not_found(e=None):
+        # If an HTML route was requested and not found as an API route, serve SPA index
+        if not request.path.startswith('/api/'):
+            index_file = os.path.join(frontend_dist_dir, 'index.html')
+            if os.path.exists(index_file):
+                return send_from_directory(frontend_dist_dir, 'index.html')
         return jsonify({
             "success": False,
             "error": "The requested API resource or endpoint was not found."

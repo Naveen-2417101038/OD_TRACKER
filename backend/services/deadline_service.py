@@ -2,9 +2,11 @@
 Background service for monitoring OD certificate upload deadlines and auto-expiring overdue requests.
 Runs periodically in a daemon thread within the Flask application.
 """
+import os
+import uuid
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 
 _deadline_thread = None
 _stop_event = threading.Event()
@@ -16,14 +18,17 @@ def run_deadline_checker(app, interval_seconds=30):
     2. Dispatch approaching deadline reminders (Feature D: Reminder: OD Certificate Submission Due).
     3. Dispatch overdue reminders (Feature D: Overdue: OD Certificate Not Yet Submitted).
     4. Auto-expire requests exceeding the 24-hour certificate deadline.
-    Uses persistent idempotency checks in notifications_collection to avoid duplicate emails.
+    Uses distributed MongoDB lease locks and persistent idempotency checks in notifications_collection
+    to prevent multiple Gunicorn workers from duplicating checks or emails.
     """
+    worker_id = f"worker_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+
     while not _stop_event.is_set():
         try:
             with app.app_context():
                 try:
                     from backend.models.od_request import ODRequestModel
-                    from backend.database.mongodb import od_requests_collection, notifications_collection
+                    from backend.database.mongodb import od_requests_collection, notifications_collection, get_db
                     from backend.services.email_service import (
                         get_student_info,
                         send_certificate_due_reminder_email,
@@ -31,12 +36,52 @@ def run_deadline_checker(app, interval_seconds=30):
                     )
                 except ImportError:
                     from models.od_request import ODRequestModel
-                    from database.mongodb import od_requests_collection, notifications_collection
+                    from database.mongodb import od_requests_collection, notifications_collection, get_db
                     from services.email_service import (
                         get_student_info,
                         send_certificate_due_reminder_email,
                         send_certificate_overdue_email
                     )
+
+                # Acquire / renew distributed lease in MongoDB to ensure only 1 worker process runs at once
+                db = get_db()
+                lease_acquired = True
+                if db is not None:
+                    try:
+                        locks = db['system_locks']
+                        now_dt = datetime.now()
+                        lease = locks.find_one_and_update(
+                            {
+                                "_id": "deadline_checker_lease",
+                                "$or": [
+                                    {"expires_at": {"$lt": now_dt}},
+                                    {"expires_at": {"$exists": False}},
+                                    {"holder": worker_id}
+                                ]
+                            },
+                            {
+                                "$set": {
+                                    "expires_at": now_dt + timedelta(seconds=max(45, int(interval_seconds) * 2)),
+                                    "holder": worker_id,
+                                    "last_heartbeat": now_dt
+                                }
+                            },
+                            upsert=True,
+                            return_document=True
+                        )
+                        if lease and lease.get("holder") != worker_id:
+                            lease_acquired = False
+                    except Exception as lock_err:
+                        # Continue if locks collection is temporarily unindexed or in mock mode
+                        pass
+
+                if not lease_acquired:
+                    # Another worker process holds the lease; sleep and retry next cycle
+                    for _ in range(max(1, int(interval_seconds))):
+                        if _stop_event.is_set():
+                            break
+                        time.sleep(1)
+                    continue
 
                 col = od_requests_collection()
                 notif_col = notifications_collection()
@@ -124,6 +169,10 @@ def run_deadline_checker(app, interval_seconds=30):
 
 def init_deadline_checker(app, interval_seconds=30):
     """Start the background daemon thread if not already running."""
+    if os.environ.get('ENABLE_DEADLINE_CHECKER', 'true').lower() in ('false', '0', 'no'):
+        print("[!] [Deadline Checker] Background monitor disabled via ENABLE_DEADLINE_CHECKER=false.")
+        return None
+
     global _deadline_thread
     if _deadline_thread is not None and _deadline_thread.is_alive():
         return _deadline_thread
