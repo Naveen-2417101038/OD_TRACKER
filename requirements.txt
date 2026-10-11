@@ -1,0 +1,2 @@
+# Root requirements.txt for Azure App Service (Oryx build engine)
+-r backend/requirements.txt

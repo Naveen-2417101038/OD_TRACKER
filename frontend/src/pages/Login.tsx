@@ -524,9 +524,44 @@ export const Login: React.FC = () => {
 
               {/* Error Alert */}
               {error && (
-                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
-                  <p className="text-xs text-rose-700 font-semibold leading-relaxed">{error}</p>
+                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl flex flex-col gap-2">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+                    <p className="text-xs text-rose-700 font-semibold leading-relaxed">{error}</p>
+                  </div>
+                  {error.toLowerCase().includes('verify') && (
+                    <div className="pl-8 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const targetId = identifier.trim();
+                          if (!targetId) {
+                            showToast('Please enter your email or Register Number above first.', 'error');
+                            return;
+                          }
+                          try {
+                            const res = await fetch('/api/auth/resend-verification', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ identifier: targetId })
+                            });
+                            const d = await res.json().catch(() => ({}));
+                            if (d.success) {
+                              showToast(d.message || 'Verification email resent successfully! Check your inbox.', 'success');
+                            } else {
+                              showToast(d.error || 'Failed to resend verification email.', 'error');
+                            }
+                          } catch {
+                            showToast('Network error while resending verification email.', 'error');
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-700 hover:text-primary-900 underline cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        Click here to resend verification email link
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 

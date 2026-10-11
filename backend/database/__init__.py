@@ -18,6 +18,8 @@ from backend.database.mongodb import (
     student_imports_history_collection,
     attendance_upload_history_collection,
     marks_upload_history_collection,
+    system_settings_collection,
+    audit_logs_collection,
     init_db
 )
 
@@ -36,5 +38,7 @@ __all__ = [
     'student_imports_history_collection',
     'attendance_upload_history_collection',
     'marks_upload_history_collection',
+    'system_settings_collection',
+    'audit_logs_collection',
     'init_db'
 ]

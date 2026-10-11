@@ -241,13 +241,16 @@ class UserModel:
         except Exception:
             pass
 
+        # Cooldown duration: 10 seconds in dev/testing for smooth iteration, 60 seconds in production
+        cooldown_sec = int(os.environ.get('OTP_COOLDOWN_SECONDS', 10 if os.environ.get('FLASK_ENV', 'development') == 'development' else 60))
         last_sent_str = user.get('otp_last_sent_at')
         if not is_testing and last_sent_str:
             try:
                 last_sent = datetime.strptime(last_sent_str, '%Y-%m-%d %H:%M:%S')
-                if (now - last_sent).total_seconds() < 60:
-                    wait_sec = int(60 - (now - last_sent).total_seconds())
-                    return OtpResult(None, user, f"Please wait {wait_sec} seconds before requesting a new OTP.")
+                elapsed = (now - last_sent).total_seconds()
+                if elapsed < cooldown_sec:
+                    wait_sec = max(1, int(cooldown_sec - elapsed))
+                    return OtpResult(None, user, f"Security cooldown active: please wait {wait_sec} seconds before requesting a new OTP code.")
             except Exception:
                 pass
 

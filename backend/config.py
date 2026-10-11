@@ -1,5 +1,10 @@
 import os
-from dotenv import load_dotenv
+try:
+    # pyrefly: ignore [missing-import]
+    from dotenv import load_dotenv  # type: ignore
+except ImportError:
+    def load_dotenv(*args, **kwargs):
+        pass
 
 # Search and load .env from project root or backend folder
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -36,7 +41,7 @@ class Config:
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', f"sqlite:///{os.path.join(BASE_DIR, 'od_tracking.db')}")
 
     # ── Upload Directories ────────────────────────────────────────────────────
-    UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+    UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', os.path.join(BASE_DIR, 'uploads'))
     OD_LETTERS_FOLDER = os.path.join(UPLOAD_FOLDER, 'od_letters')
     CERTIFICATES_FOLDER = os.path.join(UPLOAD_FOLDER, 'certificates')
 
@@ -78,3 +83,9 @@ class Config:
     MAIL_DEFAULT_SENDER = os.environ.get('MAIL_DEFAULT_SENDER', os.environ.get('SMTP_FROM_EMAIL', 'noreply@rajalakshmi.edu.in'))
     SMTP_USE_TLS = os.environ.get('SMTP_USE_TLS', 'true').lower() in ('true', '1', 'yes')
     APP_BASE_URL = os.environ.get('APP_BASE_URL', 'http://localhost:5173')
+
+    # ── Resend REST API Configuration ─────────────────────────────────────────
+    RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+    RESEND_FROM_EMAIL = os.environ.get('RESEND_FROM_EMAIL', os.environ.get('RESEND_SENDER_EMAIL', os.environ.get('MAIL_DEFAULT_SENDER', 'onboarding@resend.dev')))
+    RESEND_FROM_NAME = os.environ.get('RESEND_FROM_NAME', os.environ.get('RESEND_SENDER_NAME', 'OD Tracking Application'))
+
