@@ -10,15 +10,6 @@ try:
     from backend.models.od_request import ODRequestModel
     from backend.models.user import UserModel
     from backend.routes.auth import role_required, current_user
-    from backend.config import Config
-    from backend.database.mongodb import (
-        users_collection,
-        academic_records_collection,
-        student_imports_history_collection,
-        attendance_upload_history_collection,
-        marks_upload_history_collection,
-        od_requests_collection
-    )
     from backend.services.od_eligibility import calculate_od_eligibility
     from backend.services.excel_ci_service import (
         parse_tabular_file,
@@ -38,14 +29,6 @@ except ImportError:
     from models.user import UserModel
     from routes.auth import role_required, current_user
     from config import Config
-    from database.mongodb import (
-        users_collection,
-        academic_records_collection,
-        student_imports_history_collection,
-        attendance_upload_history_collection,
-        marks_upload_history_collection,
-        od_requests_collection
-    )
     from services.od_eligibility import calculate_od_eligibility
     from services.excel_ci_service import (
         parse_tabular_file,

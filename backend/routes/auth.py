@@ -16,7 +16,6 @@ from flask import Blueprint, request, jsonify, session, current_app, g
 from werkzeug.local import LocalProxy
 try:
     from backend.models.user import UserModel, validate_college_email
-    from backend.database.mongodb import users_collection
     from backend.services.email_service import (
         send_otp_email,
         send_password_changed_notification,
@@ -25,7 +24,6 @@ try:
     )
 except ImportError:
     from models.user import UserModel, validate_college_email
-    from database.mongodb import users_collection
     from services.email_service import (
         send_otp_email,
         send_password_changed_notification,

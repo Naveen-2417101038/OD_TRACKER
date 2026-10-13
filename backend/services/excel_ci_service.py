@@ -8,12 +8,14 @@ import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
-from backend.database.mongodb import (
-    users_collection,
-    academic_records_collection,
-    student_imports_history_collection,
-    attendance_upload_history_collection,
-    marks_upload_history_collection
+from sqlalchemy import or_
+from backend.database.sql_server import session_scope
+from backend.models.db_models import (
+    User,
+    StudentAcademicRecord,
+    StudentImportHistory,
+    AttendanceUploadHistory,
+    MarksUploadHistory
 )
 
 STUDENT_COLUMN_ALIASES = {
@@ -301,19 +303,19 @@ def validate_and_preview_students(raw_rows, ci_user):
     if 'email' not in col_map:
         return {'success': False, 'error': "Required column 'Email' not found in file."}
 
-    users_col = users_collection()
-    # Cache all existing register numbers and emails for fast matching
     existing_regs = set()
     existing_emails = set()
-    if users_col is not None:
-        all_users = list(users_col.find({}, {'identifier': 1, 'email': 1, 'id': 1}))
-        for u in all_users:
-            if u.get('identifier'):
-                existing_regs.add(str(u['identifier']).strip().upper())
-            if u.get('email'):
-                existing_emails.add(str(u['email']).strip().lower())
-            if u.get('id'):
-                existing_regs.add(str(u['id']).strip().upper())
+    try:
+        with session_scope() as session:
+            for u in session.query(User).all():
+                if u.identifier:
+                    existing_regs.add(str(u.identifier).strip().upper())
+                if u.email:
+                    existing_emails.add(str(u.email).strip().lower())
+                if u.id:
+                    existing_regs.add(str(u.id).strip().upper())
+    except Exception as e:
+        print(f"[-] [excel_ci_service] Error querying existing users: {e}")
 
     file_regs_seen = {}
     file_emails_seen = {}
@@ -464,123 +466,107 @@ def import_students_confirmed(preview_rows_to_insert, ci_user, file_name):
     - academic_records_collection: initial academic document
     - student_imports_history_collection: audit entry
     """
-    users_col = users_collection()
-    acad_col = academic_records_collection()
-    history_col = student_imports_history_collection()
-
-    if users_col is None:
-        return {'success': False, 'error': 'Database connection unavailable.'}
-
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    now_dt = datetime.now()
+    now_str = now_dt.strftime('%Y-%m-%d %H:%M:%S')
     added_students = []
     failed_rows = []
+    history_id = f"IMPH_{now_dt.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6].upper()}"
 
-    for item in preview_rows_to_insert:
-        reg_no = item.get('register_number', '').strip().upper()
-        name = item.get('student_name', '').strip()
-        email = item.get('email', '').strip().lower()
-        dept = item.get('department') or ci_user.get('department') or 'Computer Science and Design'
-        sec = item.get('section') or ci_user.get('section') or 'A'
-        year = item.get('year') or ci_user.get('year') or 'III Year'
-        phone = item.get('phone', '')
-        cgpa = float(item.get('cgpa', 0.0) or 0.0)
-        att = float(item.get('attendance', 85.0) or 85.0)
-        raw_pwd = item.get('password') or 'password123'
+    try:
+        with session_scope() as session:
+            for item in preview_rows_to_insert:
+                reg_no = item.get('register_number', '').strip().upper()
+                name = item.get('student_name', '').strip()
+                email = item.get('email', '').strip().lower()
+                dept = item.get('department') or ci_user.get('department') or 'Computer Science and Design'
+                sec = item.get('section') or ci_user.get('section') or 'A'
+                year = item.get('year') or ci_user.get('year') or 'III Year'
+                phone = item.get('phone', '')
+                cgpa = float(item.get('cgpa', 0.0) or 0.0)
+                att = float(item.get('attendance', 85.0) or 85.0)
+                raw_pwd = item.get('password') or 'password123'
 
-        if not reg_no or not email or not name:
-            failed_rows.append({'register_number': reg_no, 'name': name, 'reason': 'Missing required fields'})
-            continue
+                if not reg_no or not email or not name:
+                    failed_rows.append({'register_number': reg_no, 'name': name, 'reason': 'Missing required fields'})
+                    continue
 
-        # Double check existence to prevent race conditions
-        exists = users_col.find_one({'$or': [{'identifier': reg_no}, {'email': email}, {'id': reg_no}]})
-        if exists:
-            failed_rows.append({'register_number': reg_no, 'name': name, 'reason': 'Already exists in database'})
-            continue
+                exists = session.query(User).filter(
+                    or_(User.identifier == reg_no, User.email == email, User.id == reg_no)
+                ).first()
+                if exists:
+                    failed_rows.append({'register_number': reg_no, 'name': name, 'reason': 'Already exists in database'})
+                    continue
 
-        user_id = f"STUD_{uuid.uuid4().hex[:8].upper()}"
-        pwd_hash = generate_password_hash(raw_pwd)
+                user_id = f"STUD_{uuid.uuid4().hex[:8].upper()}"
+                pwd_hash = generate_password_hash(raw_pwd)
 
-        user_doc = {
-            'id': user_id,
-            'identifier': reg_no,
-            'name': name,
-            'email': email,
-            'role': 'Student',
-            'sub_role': 'Student',
-            'department': dept,
-            'year': year,
-            'section': sec,
-            'designation': 'Student',
-            'phone': phone,
-            'password_hash': pwd_hash,
-            'avatar': f"https://api.dicebear.com/7.x/initials/svg?seed={name}&backgroundColor=0d9488",
-            'email_verified': True,
-            'account_status': 'ACTIVE',
-            'cgpa': cgpa,
-            'attendance_percentage': att,
-            'cat1_marks': None,
-            'cat2_marks': None,
-            'cat3_marks': None,
-            'created_at': now_str,
-            'updated_at': now_str
-        }
+                new_user = User(
+                    id=user_id,
+                    identifier=reg_no,
+                    name=name,
+                    email=email,
+                    role='Student',
+                    sub_role='Student',
+                    department=dept,
+                    year=year,
+                    section=sec,
+                    designation='Student',
+                    phone=phone,
+                    password_hash=pwd_hash,
+                    avatar=f"https://api.dicebear.com/7.x/initials/svg?seed={name}&backgroundColor=0d9488",
+                    email_verified=True,
+                    account_status='ACTIVE',
+                    cgpa=cgpa,
+                    attendance_percentage=att,
+                    created_at=now_dt,
+                    updated_at=now_dt
+                )
+                session.add(new_user)
 
-        users_col.insert_one(user_doc)
+                acad_doc = StudentAcademicRecord(
+                    id=f"ACAD_{user_id}",
+                    student_id=user_id,
+                    register_number=reg_no,
+                    student_name=name,
+                    cat1_marks=None,
+                    cat2_marks=None,
+                    cat3_marks=None,
+                    attendance_percentage=att,
+                    cgpa=cgpa,
+                    total_working_days=120,
+                    updated_by=ci_user.get('id', 'CLASS_INCHARGE'),
+                    updated_by_name=ci_user.get('name', 'Class Incharge'),
+                    created_at=now_dt,
+                    updated_at=now_dt
+                )
+                session.add(acad_doc)
 
-        # Create or sync initial academic record
-        if acad_col is not None:
-            acad_doc = {
-                'id': f"ACAD_{user_id}",
-                'student_id': user_id,
-                'register_number': reg_no,
-                'student_name': name,
-                'department': dept,
-                'cat1_marks': None,
-                'cat2_marks': None,
-                'cat3_marks': None,
-                'attendance_percentage': att,
-                'total_working_days': 120,
-                'updated_by': ci_user.get('id', 'CLASS_INCHARGE'),
-                'updated_by_name': ci_user.get('name', 'Class Incharge'),
-                'created_at': now_str,
-                'updated_at': now_str
-            }
-            acad_col.update_one({'register_number': reg_no}, {'$set': acad_doc}, upsert=True)
+                added_students.append({
+                    'id': user_id,
+                    'register_number': reg_no,
+                    'name': name,
+                    'email': email,
+                    'department': dept,
+                    'section': sec,
+                    'year': year,
+                    'cgpa': cgpa,
+                    'attendance': att
+                })
 
-        added_students.append({
-            'id': user_id,
-            'register_number': reg_no,
-            'name': name,
-            'email': email,
-            'department': dept,
-            'section': sec,
-            'year': year,
-            'cgpa': cgpa,
-            'attendance': att
-        })
-
-    # Record history
-    history_id = f"IMPH_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6].upper()}"
-    history_doc = {
-        'id': history_id,
-        'file_name': file_name or 'students_import.xlsx',
-        'uploaded_by_id': ci_user.get('id'),
-        'uploaded_by_name': ci_user.get('name'),
-        'upload_date': now_str,
-        'total_records': len(preview_rows_to_insert),
-        'successful_count': len(added_students),
-        'failed_count': len(failed_rows),
-        'details': [
-            {'register_number': s['register_number'], 'name': s['name'], 'status': 'Created'}
-            for s in added_students
-        ] + [
-            {'register_number': f.get('register_number', ''), 'name': f.get('name', ''), 'status': 'Failed', 'reason': f.get('reason')}
-            for f in failed_rows
-        ],
-        'created_at': now_str
-    }
-    if history_col is not None:
-        history_col.insert_one(history_doc)
+            hist_record = StudentImportHistory(
+                id=history_id,
+                imported_by_id=ci_user.get('id'),
+                imported_by_name=ci_user.get('name'),
+                file_name=file_name or 'students_import.xlsx',
+                total_records=len(preview_rows_to_insert),
+                successful_records=len(added_students),
+                failed_records=len(failed_rows),
+                status='Completed',
+                created_at=now_dt
+            )
+            session.add(hist_record)
+    except Exception as e:
+        return {'success': False, 'error': f"Database transaction failed: {str(e)}"}
 
     return {
         'success': True,
@@ -618,14 +604,22 @@ def validate_and_preview_attendance(raw_rows, ci_user):
     if 'attendance' not in col_map:
         return {'success': False, 'error': "Required column 'Attendance Percentage' (or Attendance %) not found."}
 
-    users_col = users_collection()
     students_by_reg = {}
-    if users_col is not None:
-        st_cursor = users_col.find({'role': 'Student'}, {'id': 1, 'identifier': 1, 'name': 1, 'attendance_percentage': 1, 'department': 1, 'section': 1})
-        for s in st_cursor:
-            reg = (s.get('identifier') or s.get('id') or '').strip().upper()
-            if reg:
-                students_by_reg[reg] = s
+    try:
+        with session_scope() as session:
+            for s in session.query(User).filter_by(role='Student').all():
+                reg = (s.identifier or s.id or '').strip().upper()
+                if reg:
+                    students_by_reg[reg] = {
+                        'id': s.id,
+                        'identifier': s.identifier,
+                        'name': s.name,
+                        'attendance_percentage': s.attendance_percentage,
+                        'department': s.department,
+                        'section': s.section
+                    }
+    except Exception as e:
+        print(f"[-] [excel_ci_service] Error loading students for attendance: {e}")
 
     preview_rows = []
     total_records = 0
@@ -742,98 +736,92 @@ def update_attendance_confirmed(valid_rows, ci_user, file_name, week_date=""):
     - academic_records_collection
     - attendance_upload_history_collection (records previous and new attendance)
     """
-    users_col = users_collection()
-    acad_col = academic_records_collection()
-    history_col = attendance_upload_history_collection()
-
-    if users_col is None:
-        return {'success': False, 'error': 'Database connection unavailable.'}
-
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    now_dt = datetime.now()
+    now_str = now_dt.strftime('%Y-%m-%d %H:%M:%S')
     updated_records = []
     unmatched_or_failed = []
+    history_id = f"ATTH_{now_dt.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6].upper()}"
 
-    for item in valid_rows:
-        reg_no = item.get('register_number', '').strip().upper()
-        new_att = item.get('new_attendance')
-        prev_att = item.get('previous_attendance', 0.0)
-        st_name = item.get('student_name', '')
-        st_id = item.get('student_id')
+    try:
+        with session_scope() as session:
+            for item in valid_rows:
+                reg_no = item.get('register_number', '').strip().upper()
+                new_att = item.get('new_attendance')
+                prev_att = item.get('previous_attendance', 0.0)
+                st_name = item.get('student_name', '')
+                st_id = item.get('student_id')
 
-        if not reg_no or new_att is None:
-            unmatched_or_failed.append({'register_number': reg_no, 'student_name': st_name, 'reason': 'Invalid data'})
-            continue
+                if not reg_no or new_att is None:
+                    unmatched_or_failed.append({'register_number': reg_no, 'student_name': st_name, 'reason': 'Invalid data'})
+                    continue
 
-        try:
-            att_float = round(float(new_att), 1)
-        except ValueError:
-            unmatched_or_failed.append({'register_number': reg_no, 'student_name': st_name, 'reason': 'Invalid numeric attendance'})
-            continue
-
-        # 1. Update users collection
-        update_result = users_col.update_one(
-            {'$or': [{'identifier': reg_no}, {'id': st_id or reg_no}]},
-            {'$set': {
-                'attendance_percentage': att_float,
-                'last_academic_update': now_str,
-                'updated_at': now_str
-            }}
-        )
-
-        if update_result.matched_count == 0:
-            unmatched_or_failed.append({'register_number': reg_no, 'student_name': st_name, 'reason': 'Student not found in database'})
-            continue
-
-        # 2. Update academic_records collection
-        if acad_col is not None:
-            total_days = 120
-            if item.get('total_classes'):
                 try:
-                    total_days = int(item['total_classes'])
-                except Exception:
-                    pass
+                    att_float = round(float(new_att), 1)
+                except ValueError:
+                    unmatched_or_failed.append({'register_number': reg_no, 'student_name': st_name, 'reason': 'Invalid numeric attendance'})
+                    continue
 
-            acad_col.update_one(
-                {'register_number': reg_no},
-                {'$set': {
-                    'attendance_percentage': att_float,
+                user = session.query(User).filter(
+                    or_(User.identifier == reg_no, User.id == (st_id or reg_no))
+                ).first()
+
+                if not user:
+                    unmatched_or_failed.append({'register_number': reg_no, 'student_name': st_name, 'reason': 'Student not found in database'})
+                    continue
+
+                user.attendance_percentage = att_float
+                user.last_academic_update = now_dt
+                user.updated_at = now_dt
+
+                acad = session.query(StudentAcademicRecord).filter_by(register_number=reg_no).first()
+                if acad:
+                    acad.attendance_percentage = att_float
+                    acad.student_name = st_name or acad.student_name
+                    if item.get('total_classes'):
+                        try:
+                            acad.total_working_days = int(item['total_classes'])
+                        except Exception:
+                            pass
+                    acad.updated_by = ci_user.get('id', 'CLASS_INCHARGE')
+                    acad.updated_by_name = ci_user.get('name', 'Class Incharge')
+                    acad.updated_at = now_dt
+                else:
+                    new_acad = StudentAcademicRecord(
+                        id=f"ACAD_{user.id}",
+                        student_id=user.id,
+                        register_number=reg_no,
+                        student_name=st_name,
+                        attendance_percentage=att_float,
+                        total_working_days=int(item.get('total_classes', 120) or 120),
+                        updated_by=ci_user.get('id', 'CLASS_INCHARGE'),
+                        updated_by_name=ci_user.get('name', 'Class Incharge'),
+                        created_at=now_dt,
+                        updated_at=now_dt
+                    )
+                    session.add(new_acad)
+
+                updated_records.append({
+                    'register_number': reg_no,
                     'student_name': st_name,
-                    'total_working_days': total_days,
-                    'updated_by': ci_user.get('id', 'CLASS_INCHARGE'),
-                    'updated_by_name': ci_user.get('name', 'Class Incharge'),
-                    'updated_at': now_str
-                }},
-                upsert=True
+                    'previous_attendance': prev_att,
+                    'new_attendance': att_float,
+                    'status': 'Updated'
+                })
+
+            hist_record = AttendanceUploadHistory(
+                id=history_id,
+                uploaded_by_id=ci_user.get('id'),
+                uploaded_by_name=ci_user.get('name'),
+                file_name=file_name or 'weekly_attendance.xlsx',
+                total_records=len(valid_rows),
+                successful_records=len(updated_records),
+                failed_records=len(unmatched_or_failed),
+                status='Completed',
+                created_at=now_dt
             )
-
-        updated_records.append({
-            'register_number': reg_no,
-            'student_name': st_name,
-            'previous_attendance': prev_att,
-            'new_attendance': att_float,
-            'status': 'Updated'
-        })
-
-    # 3. Save History Record
-    history_id = f"ATTH_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6].upper()}"
-    history_doc = {
-        'id': history_id,
-        'file_name': file_name or 'weekly_attendance.xlsx',
-        'uploaded_by_id': ci_user.get('id'),
-        'uploaded_by_name': ci_user.get('name'),
-        'upload_date': now_str,
-        'week_date': week_date or datetime.now().strftime('%Y-W%W'),
-        'total_students': len(valid_rows),
-        'updated_count': len(updated_records),
-        'failed_count': len(unmatched_or_failed),
-        'details': updated_records + [
-            {'register_number': f.get('register_number', ''), 'student_name': f.get('student_name', ''), 'status': 'Failed', 'reason': f.get('reason')}
-            for f in unmatched_or_failed
-        ],
-        'created_at': now_str
-    }
-    if history_col is not None:
-        history_col.insert_one(history_doc)
+            session.add(hist_record)
+    except Exception as e:
+        return {'success': False, 'error': f"Database transaction failed: {str(e)}"}
 
     return {
         'success': True,
@@ -873,17 +861,21 @@ def validate_and_preview_marks(raw_rows, ci_user):
     if not has_mark_col:
         return {'success': False, 'error': "No marks columns found. Include at least 'CAT 1', 'CAT 2', 'CAT 3' or 'Assignment'."}
 
-    users_col = users_collection()
     students_by_reg = {}
-    if users_col is not None:
-        st_cursor = users_col.find(
-            {'role': 'Student'},
-            {'id': 1, 'identifier': 1, 'name': 1, 'cat1_marks': 1, 'cat2_marks': 1, 'cat3_marks': 1, 'assignment_marks': 1}
-        )
-        for s in st_cursor:
-            reg = (s.get('identifier') or s.get('id') or '').strip().upper()
-            if reg:
-                students_by_reg[reg] = s
+    try:
+        with session_scope() as session:
+            for s in session.query(User).filter_by(role='Student').all():
+                reg = (s.identifier or s.id or '').strip().upper()
+                if reg:
+                    students_by_reg[reg] = {
+                        'id': s.id,
+                        'name': s.name,
+                        'cat1_marks': s.cat1_marks,
+                        'cat2_marks': s.cat2_marks,
+                        'cat3_marks': s.cat3_marks,
+                    }
+    except Exception as e:
+        print(f"[-] [excel_ci_service] Error loading students for marks: {e}")
 
     preview_rows = []
     total_records = 0
@@ -1007,97 +999,96 @@ def update_marks_confirmed(valid_rows, ci_user, file_name):
     - academic_records_collection
     - marks_upload_history_collection
     """
-    users_col = users_collection()
-    acad_col = academic_records_collection()
-    history_col = marks_upload_history_collection()
-
-    if users_col is None:
-        return {'success': False, 'error': 'Database connection unavailable.'}
-
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    now_dt = datetime.now()
+    now_str = now_dt.strftime('%Y-%m-%d %H:%M:%S')
     updated_records = []
     unmatched_or_failed = []
+    history_id = f"MRKH_{now_dt.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6].upper()}"
 
-    for item in valid_rows:
-        reg_no = item.get('register_number', '').strip().upper()
-        new_marks = item.get('new_marks') or {}
-        st_name = item.get('student_name', '')
-        st_id = item.get('student_id')
+    try:
+        with session_scope() as session:
+            for item in valid_rows:
+                reg_no = item.get('register_number', '').strip().upper()
+                new_marks = item.get('new_marks') or {}
+                st_name = item.get('student_name', '')
+                st_id = item.get('student_id')
 
-        if not reg_no or not new_marks:
-            unmatched_or_failed.append({'register_number': reg_no, 'student_name': st_name, 'reason': 'Invalid data'})
-            continue
+                if not reg_no or not new_marks:
+                    unmatched_or_failed.append({'register_number': reg_no, 'student_name': st_name, 'reason': 'Invalid data'})
+                    continue
 
-        c1 = new_marks.get('cat1')
-        c2 = new_marks.get('cat2')
-        c3 = new_marks.get('cat3')
-        asgn = new_marks.get('assignment')
+                c1 = new_marks.get('cat1')
+                c2 = new_marks.get('cat2')
+                c3 = new_marks.get('cat3')
 
-        update_fields_user = {
-            'last_academic_update': now_str,
-            'updated_at': now_str
-        }
-        update_fields_acad = {
-            'updated_by': ci_user.get('id', 'CLASS_INCHARGE'),
-            'updated_by_name': ci_user.get('name', 'Class Incharge'),
-            'updated_at': now_str
-        }
+                user = session.query(User).filter(
+                    or_(User.identifier == reg_no, User.id == (st_id or reg_no))
+                ).first()
 
-        if c1 is not None:
-            update_fields_user['cat1_marks'] = c1
-            update_fields_acad['cat1_marks'] = c1
-        if c2 is not None:
-            update_fields_user['cat2_marks'] = c2
-            update_fields_acad['cat2_marks'] = c2
-        if c3 is not None:
-            update_fields_user['cat3_marks'] = c3
-            update_fields_acad['cat3_marks'] = c3
-        if asgn is not None:
-            update_fields_user['assignment_marks'] = asgn
-            update_fields_acad['assignment_marks'] = asgn
+                if not user:
+                    unmatched_or_failed.append({'register_number': reg_no, 'student_name': st_name, 'reason': 'Student not found in database'})
+                    continue
 
-        update_result = users_col.update_one(
-            {'$or': [{'identifier': reg_no}, {'id': st_id or reg_no}]},
-            {'$set': update_fields_user}
-        )
+                if c1 is not None:
+                    user.cat1_marks = c1
+                if c2 is not None:
+                    user.cat2_marks = c2
+                if c3 is not None:
+                    user.cat3_marks = c3
+                user.last_academic_update = now_dt
+                user.updated_at = now_dt
 
-        if update_result.matched_count == 0:
-            unmatched_or_failed.append({'register_number': reg_no, 'student_name': st_name, 'reason': 'Student not found in database'})
-            continue
+                acad = session.query(StudentAcademicRecord).filter_by(register_number=reg_no).first()
+                if acad:
+                    if c1 is not None:
+                        acad.cat1_marks = c1
+                    if c2 is not None:
+                        acad.cat2_marks = c2
+                    if c3 is not None:
+                        acad.cat3_marks = c3
+                    acad.updated_by = ci_user.get('id', 'CLASS_INCHARGE')
+                    acad.updated_by_name = ci_user.get('name', 'Class Incharge')
+                    acad.updated_at = now_dt
+                else:
+                    new_acad = StudentAcademicRecord(
+                        id=f"ACAD_{user.id}",
+                        student_id=user.id,
+                        register_number=reg_no,
+                        student_name=st_name,
+                        cat1_marks=c1,
+                        cat2_marks=c2,
+                        cat3_marks=c3,
+                        attendance_percentage=user.attendance_percentage or 85.0,
+                        cgpa=user.cgpa or 8.0,
+                        total_working_days=120,
+                        updated_by=ci_user.get('id', 'CLASS_INCHARGE'),
+                        updated_by_name=ci_user.get('name', 'Class Incharge'),
+                        created_at=now_dt,
+                        updated_at=now_dt
+                    )
+                    session.add(new_acad)
 
-        if acad_col is not None:
-            acad_col.update_one(
-                {'register_number': reg_no},
-                {'$set': update_fields_acad},
-                upsert=True
+                updated_records.append({
+                    'register_number': reg_no,
+                    'student_name': st_name,
+                    'marks': new_marks,
+                    'status': 'Updated'
+                })
+
+            hist_record = MarksUploadHistory(
+                id=history_id,
+                uploaded_by_id=ci_user.get('id'),
+                uploaded_by_name=ci_user.get('name'),
+                file_name=file_name or 'student_marks.xlsx',
+                total_records=len(valid_rows),
+                successful_records=len(updated_records),
+                failed_records=len(unmatched_or_failed),
+                status='Completed',
+                created_at=now_dt
             )
-
-        updated_records.append({
-            'register_number': reg_no,
-            'student_name': st_name,
-            'marks': new_marks,
-            'status': 'Updated'
-        })
-
-    # Save History Record
-    history_id = f"MRKH_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6].upper()}"
-    history_doc = {
-        'id': history_id,
-        'file_name': file_name or 'student_marks.xlsx',
-        'uploaded_by_id': ci_user.get('id'),
-        'uploaded_by_name': ci_user.get('name'),
-        'upload_date': now_str,
-        'total_students': len(valid_rows),
-        'updated_count': len(updated_records),
-        'failed_count': len(unmatched_or_failed),
-        'details': updated_records + [
-            {'register_number': f.get('register_number', ''), 'student_name': f.get('student_name', ''), 'status': 'Failed', 'reason': f.get('reason')}
-            for f in unmatched_or_failed
-        ],
-        'created_at': now_str
-    }
-    if history_col is not None:
-        history_col.insert_one(history_doc)
+            session.add(hist_record)
+    except Exception as e:
+        return {'success': False, 'error': f"Database transaction failed: {str(e)}"}
 
     return {
         'success': True,

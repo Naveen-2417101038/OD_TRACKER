@@ -1,5 +1,5 @@
 """
-OD Eligibility Calculation Service.
+OD Eligibility Calculation Service for SQL Server.
 
 Business Rule: A student may use OD for at most 10% of their overall attendance.
 
@@ -10,22 +10,16 @@ Example:
   Allowed OD days = 120 * 8% = 9.6 days
   If student already used OD for 4 days -> remaining = 5.6 days
 """
-from datetime import datetime
-
-try:
-    from backend.config import Config
-    from backend.database.mongodb import (
-        academic_records_collection,
-        users_collection,
-        od_requests_collection
-    )
-except ImportError:
-    from config import Config
-    from database.mongodb import (
-        academic_records_collection,
-        users_collection,
-        od_requests_collection
-    )
+from typing import Any
+from sqlalchemy import or_, func
+from backend.config import Config
+from backend.database.sql_server import session_scope
+from backend.models.db_models import (
+    StudentAcademicRecord,
+    User,
+    ODRequest,
+    SystemSetting
+)
 
 
 def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) -> dict:
@@ -36,22 +30,7 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
         student_id:         User ID or Register Number of the student
         requested_od_days:  Number of OD days being requested now
 
-    Returns dict:
-        student_id
-        overall_attendance_percent
-        total_working_days
-        total_attended_days
-        od_used_days          – approved OD days already consumed
-        od_used_percent       – od_used_days as % of total_working_days
-        max_od_allowed_percent – OD_LIMIT (10%) × overall_attendance_percent / 100
-        max_od_allowed_days
-        requested_od_days
-        requested_od_percent
-        remaining_od_days
-        remaining_od_percent
-        eligible               – True / False
-        rejection_reason       – set when eligible is False
-        od_limit_percent       – 10.0
+    Returns dict with attendance, limits, remaining allowance, and eligibility decision.
     """
     clean_id = (student_id or '').strip()
     if not clean_id:
@@ -63,125 +42,108 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
     limit_pct = float(getattr(Config, 'OD_ATTENDANCE_LIMIT_PERCENT', 10.0))
 
     try:
-        from backend.database.mongodb import system_settings_collection
-        settings_col = system_settings_collection()
-        if settings_col is not None:
-            cfg = settings_col.find_one({"id": "SYSTEM_CONFIG"})
-            if cfg:
-                attendance_min_threshold = float(cfg.get('attendance_threshold_percent', 75.0))
-                cgpa_high_threshold = float(cfg.get('cgpa_high_performer_threshold', 8.5))
-                limit_pct = float(cfg.get('max_od_limit_percent', 10.0))
+        with session_scope() as session:
+            setting = session.query(SystemSetting).filter_by(id='SYSTEM_CONFIG').first()
+            if setting and isinstance(setting.value, dict):
+                val = setting.value
+                attendance_min_threshold = float(val.get('attendance_threshold_percent', attendance_min_threshold))
+                cgpa_high_threshold = float(val.get('cgpa_high_performer_threshold', cgpa_high_threshold))
+                limit_pct = float(val.get('max_od_limit_percent', limit_pct))
     except Exception:
         pass
 
     total_classes = 120
-
-    # 1. First, attempt lookup from MongoDB (primary storage)
-    acad_col = academic_records_collection()
-    user_col = users_collection()
-    od_col = od_requests_collection()
-
-    student_user = None
     overall_pct = None
-    acad_doc = None
+    cgpa = None
+    target_uid = None
+    target_reg = None
 
-    if acad_col is not None:
-        acad_doc = acad_col.find_one({
-            "$or": [
-                {"student_id": clean_id},
-                {"register_number": {"$regex": f"^{clean_id}$", "$options": "i"}}
-            ]
-        })
-        if acad_doc and acad_doc.get('attendance_percentage') is not None:
-            overall_pct = float(acad_doc['attendance_percentage'])
-            total_classes = int(acad_doc.get('total_working_days', 120))
-            if not student_user and acad_doc.get('student_id'):
-                student_user = user_col.find_one({"id": acad_doc['student_id']}) if user_col is not None else None
-
-    if overall_pct is None and user_col is not None:
-        student_user = user_col.find_one({
-            "$or": [
-                {"id": clean_id},
-                {"identifier": {"$regex": f"^{clean_id}$", "$options": "i"}}
-            ]
-        })
-        if student_user and student_user.get('attendance_percentage') is not None:
-            overall_pct = float(student_user['attendance_percentage'])
-
-    # 2. Fallback to PostgreSQL/SQLite if MongoDB had no record
-    if overall_pct is None:
-        try:
-            from backend.database.postgresql import get_db_session
-            from backend.models.db_models import Student, Attendance
-            session = get_db_session()
-            st = session.query(Student).filter(
-                (Student.user_id == clean_id) | (Student.register_number == clean_id)
+    # 1. Lookup student and academic record in SQL Server
+    try:
+        with session_scope() as session:
+            # First find User
+            user_obj = session.query(User).filter(
+                or_(
+                    func.lower(User.id) == clean_id.lower(),
+                    func.lower(User.identifier) == clean_id.lower()
+                )
             ).first()
-            if st:
-                att_val = getattr(st, 'overall_attendance', None)
-                overall_pct = float(att_val) if att_val is not None else 75.0
-                days_val = getattr(st, 'total_working_days', None)
-                total_classes = int(days_val) if days_val is not None else 120
-            session.close()
-        except Exception:
-            pass
 
-    # Default fallback if student exists or standard default
+            if user_obj:
+                target_uid = user_obj.id
+                target_reg = user_obj.identifier
+                if user_obj.attendance_percentage is not None:
+                    overall_pct = float(user_obj.attendance_percentage)
+                if user_obj.cgpa is not None:
+                    cgpa = float(user_obj.cgpa)
+
+            # Query Academic Record (overrides/augments user record)
+            acad_rec = session.query(StudentAcademicRecord).filter(
+                or_(
+                    func.lower(StudentAcademicRecord.student_id) == clean_id.lower(),
+                    func.lower(StudentAcademicRecord.register_number) == clean_id.lower()
+                )
+            ).first()
+
+            if acad_rec:
+                if acad_rec.attendance_percentage is not None:
+                    overall_pct = float(acad_rec.attendance_percentage)
+                if acad_rec.total_working_days:
+                    total_classes = int(acad_rec.total_working_days)
+                if acad_rec.cgpa is not None:
+                    cgpa = float(acad_rec.cgpa)
+                if not target_uid and acad_rec.student_id:
+                    target_uid = acad_rec.student_id
+                if not target_reg and acad_rec.register_number:
+                    target_reg = acad_rec.register_number
+
+            # If user not found and no academic record
+            if not user_obj and not acad_rec:
+                return _not_found_result(clean_id)
+
+            # 2. Calculate OD days already used
+            approved_statuses = [
+                'Pending', 'Mentor Approved', 'Class Incharge Approved',
+                'HOD Approved', 'HOD Approved - Certificate Pending',
+                'Certificate Submitted', 'Approved'
+            ]
+
+            od_query = session.query(ODRequest).filter(
+                ODRequest.status.in_(approved_statuses)
+            )
+
+            id_filters = []
+            if target_uid:
+                id_filters.append(func.lower(ODRequest.student_id) == target_uid.lower())
+            if target_reg:
+                id_filters.append(func.lower(ODRequest.student_reg_no) == target_reg.lower())
+            if not id_filters:
+                id_filters.append(func.lower(ODRequest.student_id) == clean_id.lower())
+
+            od_query = od_query.filter(or_(*id_filters))
+            active_ods = od_query.all()
+
+            od_used_days = 0.0
+            for od in active_ods:
+                try:
+                    od_used_days += float(od.number_of_days or 1.0)
+                except (ValueError, TypeError):
+                    od_used_days += 1.0
+
+    except Exception as e:
+        print(f"[-] [OD Eligibility] Database lookup error: {e}")
+        return _not_found_result(clean_id)
+
+    # Fallback defaults if unspecified
     if overall_pct is None:
         overall_pct = 85.0
+    if cgpa is None:
+        cgpa = 8.6
 
     total_attended = int(total_classes * overall_pct / 100.0)
-
-    # Extract CGPA
-    cgpa = None
-    if acad_doc and acad_doc.get('cgpa') is not None:
-        try:
-            cgpa = float(acad_doc['cgpa'])
-        except (ValueError, TypeError):
-            pass
-    if cgpa is None and student_user and student_user.get('cgpa') is not None:
-        try:
-            cgpa = float(student_user['cgpa'])
-        except (ValueError, TypeError):
-            pass
-    if cgpa is None:
-        cgpa = 8.6  # Default healthy CGPA for demonstration if unspecified
-
-    # 3. Calculate OD days already used (Pending, Mentor Approved, Class Incharge Approved, HOD Approved, Approved)
-    od_used_days = 0.0
-    approved_statuses = [
-        'Pending', 'Mentor Approved', 'Class Incharge Approved',
-        'HOD Approved', 'HOD Approved - Certificate Pending',
-        'Certificate Submitted', 'Approved'
-    ]
-
-    target_uid = (student_user.get('id') if student_user else None) or clean_id
-    target_reg = (student_user.get('identifier') if student_user else None) or clean_id
-
-    if od_col is not None:
-        active_ods = list(od_col.find({
-            "$and": [
-                {"$or": [
-                    {"student_id": target_uid},
-                    {"student_reg_no": {"$regex": f"^{target_reg}$", "$options": "i"}},
-                    {"studentRegisterNo": {"$regex": f"^{target_reg}$", "$options": "i"}}
-                ]},
-                {"status": {"$in": approved_statuses}}
-            ]
-        }))
-        for od in active_ods:
-            days = od.get('number_of_days') or od.get('numberOfDays') or 1.0
-            try:
-                od_used_days += float(days)
-            except (ValueError, TypeError):
-                od_used_days += 1.0
-
     od_used_percent = (od_used_days / total_classes * 100.0) if total_classes > 0 else 0.0
 
-    # 4. Centralized Institutional Academic Rules:
-    # Rule A: Attendance Below 75% -> Ineligible for OD
-    # Rule B: CGPA Above 8.5 -> No 10% OD Limit
-    # Rule C: CGPA Below 8.5 -> Subject to 10% OD Limit
+    # 4. Institutional Academic Rules
     has_high_cgpa = (cgpa >= cgpa_high_threshold)
     is_low_attendance = (overall_pct < attendance_min_threshold)
 
@@ -206,7 +168,6 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
         max_od_allowed_days = 999.0
         remaining_od_days = 999.0
     else:
-        # Standard student subject to 10% limit
         projected_used = od_used_days + requested_od_days
         if requested_od_days > 0 and projected_used > max_od_allowed_days:
             eligible = False
@@ -250,7 +211,7 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
     }
 
 
-def _not_found_result(student_id):
+def _not_found_result(student_id: str) -> dict:
     return {
         'student_id': student_id,
         'overall_attendance_percent': 0.0,

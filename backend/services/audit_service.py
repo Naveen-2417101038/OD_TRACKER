@@ -1,5 +1,5 @@
 """
-Centralized Audit Logging Service.
+Centralized Audit Logging Service for SQL Server.
 
 Every important system action is recorded in the audit_logs table.
 NEVER log: passwords, password hashes, tokens, secret keys.
@@ -7,23 +7,10 @@ NEVER log: passwords, password hashes, tokens, secret keys.
 from datetime import datetime, timezone
 from typing import Any
 from flask import request as flask_request
+from sqlalchemy import or_
 
-
-try:
-    from backend.database.mongodb import get_db
-except ImportError:
-    try:
-        from database.mongodb import get_db
-    except ImportError:
-        get_db = lambda: None
-
-try:
-    from backend.database.postgresql import get_db_session
-    from backend.models.db_models import AuditLog
-except ImportError:
-    get_db_session = None
-    AuditLog = None
-
+from backend.database.sql_server import session_scope
+from backend.models.db_models import AuditLog
 
 
 # ─── Audit Action Constants ───────────────────────────────────────────────────
@@ -79,44 +66,21 @@ def log_action(
     ip_address: str | None = None,
 ):
     """
-    Record an audit log entry in PostgreSQL.
+    Record an audit log entry in Microsoft SQL Server.
 
     This must be called AFTER the actual database operation succeeds.
-    If the operation fails, do NOT call this — the audit log must reflect reality.
     """
-    # Never log sensitive fields
     assert 'password' not in (description or '').lower() or 'changed' in (description or '').lower() or 'reset' in (description or '').lower(), \
         "Audit log must not contain password details"
 
-    # Auto-detect IP if not provided
     if ip_address is None:
         try:
             ip_address = flask_request.remote_addr
         except RuntimeError:
             ip_address = 'system'
 
-    # Try MongoDB first
     try:
-        db = get_db()
-        if db is not None:
-            db['audit_logs'].insert_one({
-                'user_id': user_id,
-                'user_email': user_email,
-                'user_role': user_role,
-                'action': action,
-                'entity_type': entity_type,
-                'entity_id': entity_id,
-                'description': description,
-                'ip_address': ip_address,
-                'created_at': datetime.now(timezone.utc).isoformat()
-            })
-            return
-    except Exception as me:
-        pass
-
-    if callable(get_db_session) and AuditLog is not None:
-        session = get_db_session()
-        try:
+        with session_scope() as session:
             log_entry = AuditLog(
                 user_id=user_id,
                 user_email=user_email,
@@ -126,18 +90,11 @@ def log_action(
                 entity_id=entity_id,
                 description=description,
                 ip_address=ip_address,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
             )
             session.add(log_entry)
-            session.commit()
-        except Exception as e:
-            if hasattr(session, 'rollback'):
-                session.rollback()
-            print(f"[!] Audit log write failed: {e}")
-        finally:
-            if hasattr(session, 'close'):
-                session.close()
-
+    except Exception as e:
+        print(f"[!] Audit log write failed: {e}")
 
 
 def log_from_user(user: dict, action: str, **kwargs):
@@ -164,53 +121,10 @@ def get_audit_logs(
     search: str | None = None,
 ) -> dict:
     """
-    Query audit logs with filtering and pagination.
-    Returns dict with logs list, total, page, per_page.
+    Query audit logs with filtering and pagination from SQL Server.
     """
-    # MongoDB support
     try:
-        db = get_db()
-        if db is not None:
-            query_filter: dict = {}
-            if user_email:
-                query_filter['user_email'] = {'$regex': user_email, '$options': 'i'}
-            if user_role:
-                query_filter['user_role'] = {'$regex': f"^{user_role}$", '$options': 'i'}
-            if action:
-                query_filter['action'] = action
-            if entity_type:
-                query_filter['entity_type'] = entity_type
-            if entity_id:
-                query_filter['entity_id'] = entity_id
-            if search:
-                query_filter['$or'] = [
-                    {'description': {'$regex': search, '$options': 'i'}},
-                    {'user_email': {'$regex': search, '$options': 'i'}},
-                    {'action': {'$regex': search, '$options': 'i'}},
-                    {'entity_id': {'$regex': search, '$options': 'i'}}
-                ]
-
-            col = db['audit_logs']
-            total = col.count_documents(query_filter)
-            cursor = col.find(query_filter).sort('created_at', -1).skip((page - 1) * per_page).limit(per_page)
-            logs = []
-            for doc in cursor:
-                doc['_id'] = str(doc.get('_id', ''))
-                logs.append(doc)
-
-            return {
-                'logs': logs,
-                'total': total,
-                'page': page,
-                'per_page': per_page,
-                'pages': (total + per_page - 1) // per_page if per_page > 0 else 1,
-            }
-    except Exception:
-        pass
-
-    if callable(get_db_session) and AuditLog is not None:
-        session = get_db_session()
-        try:
+        with session_scope() as session:
             query = session.query(AuditLog)
 
             if user_email:
@@ -226,10 +140,12 @@ def get_audit_logs(
             if search:
                 search_like = f'%{search}%'
                 query = query.filter(
-                    AuditLog.description.ilike(search_like) |
-                    AuditLog.user_email.ilike(search_like) |
-                    AuditLog.action.ilike(search_like) |
-                    AuditLog.entity_id.ilike(search_like)
+                    or_(
+                        AuditLog.description.ilike(search_like),
+                        AuditLog.user_email.ilike(search_like),
+                        AuditLog.action.ilike(search_like),
+                        AuditLog.entity_id.ilike(search_like)
+                    )
                 )
 
             total = query.count()
@@ -243,19 +159,17 @@ def get_audit_logs(
                 'total': total,
                 'page': page,
                 'per_page': per_page,
-                'pages': (total + per_page - 1) // per_page,
+                'pages': (total + per_page - 1) // per_page if per_page > 0 else 1,
             }
-        finally:
-            if hasattr(session, 'close'):
-                session.close()
-
-    return {
-        'logs': [],
-        'total': 0,
-        'page': page,
-        'per_page': per_page,
-        'pages': 0,
-    }
+    except Exception as e:
+        print(f"[!] Error querying audit logs: {e}")
+        return {
+            'logs': [],
+            'total': 0,
+            'page': page,
+            'per_page': per_page,
+            'pages': 0,
+        }
 
 
 def _log_to_dict(log: Any) -> dict:

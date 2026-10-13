@@ -10,7 +10,6 @@ from werkzeug.utils import secure_filename
 from backend.routes.auth import login_required, role_required, current_user
 from backend.models.academic_record import AcademicRecordModel, AcademicUploadHistoryModel
 from backend.models.user import UserModel
-from backend.database.mongodb import users_collection
 from backend.services.excel_academic_service import (
     generate_sample_academic_template,
     parse_and_validate_academic_excel

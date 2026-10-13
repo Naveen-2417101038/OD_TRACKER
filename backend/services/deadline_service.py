@@ -1,12 +1,22 @@
 """
 Background service for monitoring OD certificate upload deadlines and auto-expiring overdue requests.
 Runs periodically in a daemon thread within the Flask application.
+Powered by Microsoft SQL Server.
 """
 import os
 import uuid
 import time
 import threading
 from datetime import datetime, timedelta
+
+from backend.database.sql_server import session_scope
+from backend.models.db_models import ODRequest, Notification, SystemLock
+from backend.models.od_request import ODRequestModel
+from backend.services.email_service import (
+    get_student_info,
+    send_certificate_due_reminder_email,
+    send_certificate_overdue_email
+)
 
 _deadline_thread = None
 _stop_event = threading.Event()
@@ -15,142 +25,129 @@ def run_deadline_checker(app, interval_seconds=30):
     """
     Periodic background worker to:
     1. Check HOD-approved requests awaiting certificate upload.
-    2. Dispatch approaching deadline reminders (Feature D: Reminder: OD Certificate Submission Due).
-    3. Dispatch overdue reminders (Feature D: Overdue: OD Certificate Not Yet Submitted).
+    2. Dispatch approaching deadline reminders.
+    3. Dispatch overdue reminders.
     4. Auto-expire requests exceeding the 24-hour certificate deadline.
-    Uses distributed MongoDB lease locks and persistent idempotency checks in notifications_collection
-    to prevent multiple Gunicorn workers from duplicating checks or emails.
+    Uses distributed SQL Server system_locks lease to prevent multiple workers from duplicating checks or emails.
     """
     worker_id = f"worker_{os.getpid()}_{uuid.uuid4().hex[:8]}"
 
     while not _stop_event.is_set():
         try:
             with app.app_context():
-                try:
-                    from backend.models.od_request import ODRequestModel
-                    from backend.database.mongodb import od_requests_collection, notifications_collection, get_db
-                    from backend.services.email_service import (
-                        get_student_info,
-                        send_certificate_due_reminder_email,
-                        send_certificate_overdue_email
-                    )
-                except ImportError:
-                    from models.od_request import ODRequestModel
-                    from database.mongodb import od_requests_collection, notifications_collection, get_db
-                    from services.email_service import (
-                        get_student_info,
-                        send_certificate_due_reminder_email,
-                        send_certificate_overdue_email
-                    )
-
-                # Acquire / renew distributed lease in MongoDB to ensure only 1 worker process runs at once
-                db = get_db()
+                # Acquire / renew distributed lease in SQL Server
                 lease_acquired = True
-                if db is not None:
-                    try:
-                        locks = db['system_locks']
+                try:
+                    with session_scope() as session:
+                        lock = session.query(SystemLock).filter_by(id="deadline_checker_lease").first()
                         now_dt = datetime.now()
-                        lease = locks.find_one_and_update(
-                            {
-                                "_id": "deadline_checker_lease",
-                                "$or": [
-                                    {"expires_at": {"$lt": now_dt}},
-                                    {"expires_at": {"$exists": False}},
-                                    {"holder": worker_id}
-                                ]
-                            },
-                            {
-                                "$set": {
-                                    "expires_at": now_dt + timedelta(seconds=max(45, int(interval_seconds) * 2)),
-                                    "holder": worker_id,
-                                    "last_heartbeat": now_dt
-                                }
-                            },
-                            upsert=True,
-                            return_document=True
-                        )
-                        if lease and lease.get("holder") != worker_id:
+                        expiry_time = now_dt + timedelta(seconds=max(45, int(interval_seconds) * 2))
+
+                        if not lock:
+                            lock = SystemLock(
+                                id="deadline_checker_lease",
+                                holder=worker_id,
+                                expires_at=expiry_time,
+                                last_heartbeat=now_dt
+                            )
+                            session.add(lock)
+                        elif lock.expires_at is None or lock.expires_at < now_dt or lock.holder == worker_id:
+                            lock.holder = worker_id
+                            lock.expires_at = expiry_time
+                            lock.last_heartbeat = now_dt
+                        else:
                             lease_acquired = False
-                    except Exception as lock_err:
-                        # Continue if locks collection is temporarily unindexed or in mock mode
-                        pass
+                except Exception as lock_err:
+                    pass
 
                 if not lease_acquired:
-                    # Another worker process holds the lease; sleep and retry next cycle
                     for _ in range(max(1, int(interval_seconds))):
                         if _stop_event.is_set():
                             break
                         time.sleep(1)
                     continue
 
-                col = od_requests_collection()
-                notif_col = notifications_collection()
+                # Query approved requests awaiting certificate upload
+                docs = []
+                now = datetime.now()
+                try:
+                    with session_scope() as session:
+                        req_query = session.query(ODRequest).filter(
+                            ODRequest.status.in_(["HOD Approved - Certificate Pending", "HOD Approved", "Approved"]),
+                            ODRequest.certificate_status.in_(["Not Uploaded", "Pending Upload", None])
+                        )
+                        for r in req_query.all():
+                            docs.append(r.to_dict())
+                except Exception:
+                    docs = []
 
-                if col is not None and notif_col is not None:
-                    now = datetime.now()
+                for doc in docs:
+                    if doc.get('certificate_status') in ('Verified', 'Pending Verification'):
+                        continue
 
-                    # Query approved requests awaiting certificate upload
-                    query = {
-                        "status": {"$in": ["HOD Approved - Certificate Pending", "HOD Approved", "Approved"]},
-                        "certificate_status": {"$in": ["Not Uploaded", "Pending Upload", None]}
-                    }
+                    req_id = str(doc.get('id') or '')
+                    end_dt, deadline_dt = ODRequestModel.get_event_end_and_deadline(doc)
+                    if not deadline_dt:
+                        continue
 
-                    try:
-                        docs = list(col.find(query))
-                    except Exception:
-                        docs = []
+                    s_email, s_name = get_student_info(doc)
+                    if not s_email:
+                        continue
 
-                    for doc in docs:
-                        if doc.get('certificate_status') in ('Verified', 'Pending Verification'):
-                            continue
+                    event_name = doc.get('event_name') or doc.get('eventName') or 'Event'
+                    dates = f"{doc.get('from_date', '')} to {doc.get('to_date', '')}".strip() or 'N/A'
+                    deadline_str = deadline_dt.strftime('%Y-%m-%d %H:%M:%S')
 
-                        req_id = str(doc.get('id') or doc.get('_id'))
-                        end_dt, deadline_dt = ODRequestModel.get_event_end_and_deadline(doc)
-                        if not deadline_dt:
-                            continue
+                    # 1. Approaching Reminder Check (Within 6 hours of deadline or after event end)
+                    time_left_seconds = (deadline_dt - now).total_seconds()
+                    if 0 < time_left_seconds <= 6 * 3600:
+                        has_reminder = False
+                        try:
+                            with session_scope() as session:
+                                existing = session.query(Notification).filter_by(
+                                    related_request_id=req_id,
+                                    type="cert_reminder_due"
+                                ).first()
+                                if existing:
+                                    has_reminder = True
+                        except Exception:
+                            pass
 
-                        s_email, s_name = get_student_info(doc)
-                        if not s_email:
-                            continue
+                        if not has_reminder:
+                            send_certificate_due_reminder_email(
+                                to_email=s_email,
+                                student_name=s_name,
+                                event_name=event_name,
+                                dates=dates,
+                                request_id=req_id,
+                                deadline_str=deadline_str,
+                                user_id=doc.get('student_id')
+                            )
 
-                        event_name = doc.get('event_name') or doc.get('eventName') or 'Event'
-                        dates = f"{doc.get('from_date', '')} to {doc.get('to_date', '')}".strip() or 'N/A'
-                        deadline_str = deadline_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    # 2. Overdue Reminder Check (Deadline passed but not yet processed for expiration)
+                    elif time_left_seconds <= 0:
+                        has_overdue = False
+                        try:
+                            with session_scope() as session:
+                                existing = session.query(Notification).filter_by(
+                                    related_request_id=req_id,
+                                    type="cert_reminder_overdue"
+                                ).first()
+                                if existing:
+                                    has_overdue = True
+                        except Exception:
+                            pass
 
-                        # 1. Approaching Reminder Check (Within 6 hours of deadline or after event end)
-                        time_left_seconds = (deadline_dt - now).total_seconds()
-                        if 0 < time_left_seconds <= 6 * 3600:
-                            existing_due = notif_col.find_one({
-                                "related_request_id": req_id,
-                                "type": "cert_reminder_due"
-                            })
-                            if not existing_due:
-                                send_certificate_due_reminder_email(
-                                    to_email=s_email,
-                                    student_name=s_name,
-                                    event_name=event_name,
-                                    dates=dates,
-                                    request_id=req_id,
-                                    deadline_str=deadline_str,
-                                    user_id=doc.get('student_id')
-                                )
-
-                        # 2. Overdue Reminder Check (Deadline passed but not yet processed for expiration)
-                        elif time_left_seconds <= 0:
-                            existing_overdue = notif_col.find_one({
-                                "related_request_id": req_id,
-                                "type": "cert_reminder_overdue"
-                            })
-                            if not existing_overdue:
-                                send_certificate_overdue_email(
-                                    to_email=s_email,
-                                    student_name=s_name,
-                                    event_name=event_name,
-                                    dates=dates,
-                                    request_id=req_id,
-                                    deadline_str=deadline_str,
-                                    user_id=doc.get('student_id')
-                                )
+                        if not has_overdue:
+                            send_certificate_overdue_email(
+                                to_email=s_email,
+                                student_name=s_name,
+                                event_name=event_name,
+                                dates=dates,
+                                request_id=req_id,
+                                deadline_str=deadline_str,
+                                user_id=doc.get('student_id')
+                            )
 
                 # Auto-expire overdue requests
                 expired_count = ODRequestModel.check_and_expire_deadlines()
@@ -158,10 +155,8 @@ def run_deadline_checker(app, interval_seconds=30):
                     print(f"[*] [Deadline Checker] Automatically rejected {expired_count} OD request(s) due to certificate deadline expiry at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.")
 
         except Exception as e:
-            # Prevent background worker from crashing Flask app
             print(f"[-] [Deadline Checker] Error in background worker: {e}")
 
-        # Sleep in small increments to allow responsive shutdown
         for _ in range(max(1, int(interval_seconds))):
             if _stop_event.is_set():
                 break

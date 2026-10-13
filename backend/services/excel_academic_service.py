@@ -6,7 +6,6 @@ import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from backend.models.user import UserModel
-from backend.database.mongodb import users_collection
 
 COLUMN_ALIASES = {
     'register_number': [
@@ -161,14 +160,8 @@ def parse_and_validate_academic_excel(file_stream, allowed_department=None):
             'error': "Missing required columns in spreadsheet. Expected headers must include 'Register Number' and 'Attendance Percentage' (or CAT marks)."
         }
 
-    # Retrieve all student users from MongoDB for fast in-memory matching
-    users_col = users_collection()
-    all_students = []
-    if users_col is not None:
-        all_students = list(users_col.find(
-            {"role": {"$regex": "^student$", "$options": "i"}},
-            {"id": 1, "identifier": 1, "name": 1, "department": 1, "year": 1, "section": 1}
-        ))
+    # Retrieve all student users from SQL Server for fast in-memory matching
+    all_students = UserModel.get_all(role='Student')
 
     # Build lookup dictionaries (by identifier and ID, uppercase stripped)
     student_lookup = {}

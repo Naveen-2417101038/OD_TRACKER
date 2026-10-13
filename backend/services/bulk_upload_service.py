@@ -14,7 +14,6 @@ from openpyxl.utils import get_column_letter
 
 from backend.models.user import UserModel, validate_college_email
 from backend.models.academic_record import AcademicRecordModel
-from backend.database.mongodb import users_collection, academic_records_collection
 
 # In-memory preview token storage with TTL
 BULK_PREVIEW_CACHE: Dict[str, Dict[str, Any]] = {}

@@ -1,269 +1,265 @@
+"""
+Academic Record Domain Model powered by Microsoft SQL Server (SQLAlchemy ORM).
+"""
 import uuid
+import json
 from datetime import datetime
-from bson import ObjectId
-from backend.database.mongodb import (
-    academic_records_collection,
-    academic_upload_history_collection,
-    users_collection
+from typing import Any, Dict, List, Optional, Tuple
+
+from sqlalchemy import or_, func
+from backend.database.sql_server import session_scope
+from backend.models.db_models import (
+    StudentAcademicRecord,
+    AcademicUploadHistory,
+    User,
+    parse_datetime,
+    to_iso,
 )
-from backend.models.user import UserModel
+
 
 class AcademicRecordModel:
     @staticmethod
-    def _format_doc(doc):
-        if not doc:
-            return None
-        formatted = dict(doc)
-        if '_id' in formatted:
-            formatted['_id'] = str(formatted['_id'])
-        return formatted
-
-    @staticmethod
-    def get_by_student_id(student_id):
+    def get_by_student_id(student_id: Any) -> Optional[dict]:
         """Retrieve academic record for a specific student ID."""
-        col = academic_records_collection()
-        if col is None:
+        if not student_id:
             return None
-        doc = col.find_one({"$or": [{"student_id": str(student_id)}, {"id": str(student_id)}]})
-        return AcademicRecordModel._format_doc(doc)
+        clean_id = str(student_id).strip()
+        with session_scope() as session:
+            record = (
+                session.query(StudentAcademicRecord)
+                .filter(
+                    or_(
+                        StudentAcademicRecord.student_id == clean_id,
+                        StudentAcademicRecord.id == clean_id,
+                    )
+                )
+                .first()
+            )
+            return record.to_dict() if record else None
 
     @staticmethod
-    def get_by_register_number(register_no):
+    def get_by_register_number(register_no: str) -> Optional[dict]:
         """Retrieve academic record by register number (case-insensitive)."""
-        col = academic_records_collection()
-        if col is None or not register_no:
+        if not register_no:
             return None
-        clean_reg = register_no.strip()
-        doc = col.find_one({"register_number": {"$regex": f"^{clean_reg}$", "$options": "i"}})
-        return AcademicRecordModel._format_doc(doc)
+        clean_reg = register_no.strip().lower()
+        with session_scope() as session:
+            record = (
+                session.query(StudentAcademicRecord)
+                .filter(func.lower(StudentAcademicRecord.register_number) == clean_reg)
+                .first()
+            )
+            return record.to_dict() if record else None
 
     @staticmethod
-    def list_all():
+    def list_all() -> List[dict]:
         """List all academic records sorted by register number."""
-        col = academic_records_collection()
-        if col is None:
-            return []
-        cursor = col.find({}).sort("register_number", 1)
-        return [AcademicRecordModel._format_doc(d) for d in cursor]
+        with session_scope() as session:
+            records = (
+                session.query(StudentAcademicRecord)
+                .order_by(StudentAcademicRecord.register_number.asc())
+                .all()
+            )
+            return [r.to_dict() for r in records]
 
     @staticmethod
-    def upsert_academic_record(student_id, register_number, student_name, cat1, cat2, cat3, attendance, updated_by_id, updated_by_name, cgpa=None):
+    def upsert_academic_record(
+        student_id: str,
+        register_number: str,
+        student_name: str,
+        cat1: Any,
+        cat2: Any,
+        cat3: Any,
+        attendance: Any,
+        updated_by_id: str,
+        updated_by_name: str,
+        cgpa: Any = None,
+    ) -> Optional[dict]:
         """
         Create or update a student's academic record.
-        Also syncs attendance, CAT marks, and CGPA directly into the student's User document.
+        Also syncs attendance, CAT marks, and CGPA directly into the student's User record.
         """
-        acad_col = academic_records_collection()
-        users_col = users_collection()
-        if acad_col is None:
-            raise RuntimeError("Database connection not established.")
-
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        # Clean marks & attendance numbers
+        now = datetime.now()
         c1 = float(cat1) if cat1 is not None and str(cat1).strip() != '' else None
         c2 = float(cat2) if cat2 is not None and str(cat2).strip() != '' else None
         c3 = float(cat3) if cat3 is not None and str(cat3).strip() != '' else None
         att = float(attendance) if attendance is not None else 0.0
-        clean_cgpa = float(cgpa) if cgpa is not None and str(cgpa).strip() != '' else None
 
-        existing = acad_col.find_one({"$or": [{"student_id": student_id}, {"register_number": register_number}]})
-        doc_id = existing['id'] if existing else f"ACAD_{student_id}"
-
-        update_payload = {
-            'id': doc_id,
-            'student_id': student_id,
-            'register_number': register_number,
-            'student_name': student_name,
-            'cat1_marks': c1,
-            'cat2_marks': c2,
-            'cat3_marks': c3,
-            'attendance_percentage': att,
-            'total_working_days': 120,
-            'updated_by': updated_by_id,
-            'updated_by_name': updated_by_name,
-            'updated_at': now_str
-        }
-        if clean_cgpa is not None:
-            update_payload['cgpa'] = clean_cgpa
-
-        if not existing:
-            update_payload['created_at'] = now_str
-            acad_col.insert_one(update_payload)
-        else:
-            acad_col.update_one({"_id": existing['_id']}, {"$set": update_payload})
-
-        # Synchronize attendance and marks into the student user document
-        if users_col is not None:
-            user_sync = {
-                "attendance_percentage": att,
-                "cat1_marks": c1,
-                "cat2_marks": c2,
-                "cat3_marks": c3,
-                "last_academic_update": now_str,
-                "updated_at": now_str
-            }
-            if clean_cgpa is not None:
-                user_sync["cgpa"] = clean_cgpa
-            users_col.update_one(
-                {"$or": [{"id": student_id}, {"identifier": register_number}]},
-                {"$set": user_sync}
+        with session_scope() as session:
+            record = (
+                session.query(StudentAcademicRecord)
+                .filter(
+                    or_(
+                        StudentAcademicRecord.student_id == student_id,
+                        StudentAcademicRecord.register_number == register_number,
+                    )
+                )
+                .first()
             )
 
-        return AcademicRecordModel.get_by_student_id(student_id)
+            if not record:
+                record = StudentAcademicRecord(
+                    id=f"ACAD_{student_id}",
+                    student_id=student_id,
+                    register_number=register_number,
+                    student_name=student_name,
+                    created_at=now,
+                )
+                session.add(record)
+
+            record.student_name = student_name
+            record.cat1_marks = c1
+            record.cat2_marks = c2
+            record.cat3_marks = c3
+            record.attendance_percentage = att
+            record.total_working_days = 120
+            record.updated_by = updated_by_id
+            record.updated_by_name = updated_by_name
+            record.updated_at = now
+
+            # Sync user table
+            user = (
+                session.query(User)
+                .filter(or_(User.id == student_id, User.identifier == register_number))
+                .first()
+            )
+            if user:
+                user.attendance_percentage = att
+                user.cat1_marks = c1
+                user.cat2_marks = c2
+                user.cat3_marks = c3
+                user.last_academic_update = now
+                user.updated_at = now
+
+            session.flush()
+            return record.to_dict()
 
     @staticmethod
-    def batch_update_records(validated_rows, updated_by_id, updated_by_name):
+    def batch_update_records(validated_rows: list, updated_by_id: str, updated_by_name: str) -> Tuple[Optional[list], Optional[str]]:
         """
         Transaction-safe batch update of multiple student academic records.
-        If any record update fails, records are rolled back or aborted.
+        Executed within a single database transaction.
         """
-        acad_col = academic_records_collection()
-        users_col = users_collection()
-        if acad_col is None:
-            raise RuntimeError("Database connection not established.")
-
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = datetime.now()
         updated_records = []
 
-        # Save previous states for rollback safety
-        rollback_log = []
-
         try:
-            for row in validated_rows:
-                student_id = row.get('student_id')
-                reg_no = row.get('register_number')
-                student_name = row.get('student_name')
-                cat1 = row.get('cat1')
-                cat2 = row.get('cat2')
-                cat3 = row.get('cat3')
-                att = row.get('attendance')
+            with session_scope() as session:
+                for row in validated_rows:
+                    student_id = row.get('student_id')
+                    reg_no = row.get('register_number')
+                    student_name = row.get('student_name')
+                    cat1 = row.get('cat1')
+                    cat2 = row.get('cat2')
+                    cat3 = row.get('cat3')
+                    att = row.get('attendance')
 
-                if not student_id or not reg_no:
-                    continue
+                    if not student_id or not reg_no:
+                        continue
 
-                # Preserve old state
-                old_acad = acad_col.find_one({"student_id": student_id})
-                old_user = users_col.find_one({"id": student_id}) if users_col is not None else None
-                rollback_log.append((student_id, old_acad, old_user))
+                    c1 = float(cat1) if cat1 is not None and str(cat1).strip() != '' else None
+                    c2 = float(cat2) if cat2 is not None and str(cat2).strip() != '' else None
+                    c3 = float(cat3) if cat3 is not None and str(cat3).strip() != '' else None
+                    att_val = float(att) if att is not None else 0.0
 
-                # Perform update
-                c1 = float(cat1) if cat1 is not None and str(cat1).strip() != '' else None
-                c2 = float(cat2) if cat2 is not None and str(cat2).strip() != '' else None
-                c3 = float(cat3) if cat3 is not None and str(cat3).strip() != '' else None
-                att_val = float(att) if att is not None else 0.0
-
-                existing = acad_col.find_one({"$or": [{"student_id": student_id}, {"register_number": reg_no}]})
-                doc_id = existing['id'] if existing else f"ACAD_{student_id}"
-
-                doc = {
-                    'id': doc_id,
-                    'student_id': student_id,
-                    'register_number': reg_no,
-                    'student_name': student_name,
-                    'cat1_marks': c1,
-                    'cat2_marks': c2,
-                    'cat3_marks': c3,
-                    'attendance_percentage': att_val,
-                    'total_working_days': 120,
-                    'updated_by': updated_by_id,
-                    'updated_by_name': updated_by_name,
-                    'updated_at': now_str
-                }
-
-                if not existing:
-                    doc['created_at'] = now_str
-                    acad_col.insert_one(doc)
-                else:
-                    acad_col.update_one({"_id": existing['_id']}, {"$set": doc})
-
-                # Sync user document
-                if users_col is not None:
-                    users_col.update_one(
-                        {"$or": [{"id": student_id}, {"identifier": reg_no}]},
-                        {"$set": {
-                            "attendance_percentage": att_val,
-                            "cat1_marks": c1,
-                            "cat2_marks": c2,
-                            "cat3_marks": c3,
-                            "last_academic_update": now_str,
-                            "updated_at": now_str
-                        }}
+                    record = (
+                        session.query(StudentAcademicRecord)
+                        .filter(
+                            or_(
+                                StudentAcademicRecord.student_id == student_id,
+                                StudentAcademicRecord.register_number == reg_no,
+                            )
+                        )
+                        .first()
                     )
 
-                updated_records.append(doc)
+                    if not record:
+                        record = StudentAcademicRecord(
+                            id=f"ACAD_{student_id}",
+                            student_id=student_id,
+                            register_number=reg_no,
+                            student_name=student_name,
+                            created_at=now,
+                        )
+                        session.add(record)
 
-            return updated_records, None
+                    record.student_name = student_name
+                    record.cat1_marks = c1
+                    record.cat2_marks = c2
+                    record.cat3_marks = c3
+                    record.attendance_percentage = att_val
+                    record.total_working_days = 120
+                    record.updated_by = updated_by_id
+                    record.updated_by_name = updated_by_name
+                    record.updated_at = now
+
+                    # Sync into User
+                    user = (
+                        session.query(User)
+                        .filter(or_(User.id == student_id, User.identifier == reg_no))
+                        .first()
+                    )
+                    if user:
+                        user.attendance_percentage = att_val
+                        user.cat1_marks = c1
+                        user.cat2_marks = c2
+                        user.cat3_marks = c3
+                        user.last_academic_update = now
+                        user.updated_at = now
+
+                    session.flush()
+                    updated_records.append(record.to_dict())
+
+                return updated_records, None
 
         except Exception as e:
-            # Perform rollback to previous states
-            for st_id, prev_acad, prev_user in rollback_log:
-                try:
-                    if prev_acad:
-                        acad_col.replace_one({"student_id": st_id}, prev_acad, upsert=True)
-                    else:
-                        acad_col.delete_one({"student_id": st_id})
-
-                    if prev_user and users_col is not None:
-                        users_col.replace_one({"id": st_id}, prev_user, upsert=True)
-                except Exception:
-                    pass
             return None, f"Batch database transaction failed: {str(e)}"
 
 
 class AcademicUploadHistoryModel:
     @staticmethod
-    def _format_doc(doc):
-        if not doc:
-            return None
-        formatted = dict(doc)
-        if '_id' in formatted:
-            formatted['_id'] = str(formatted['_id'])
-        formatted['unmatched_students'] = formatted.get('unmatched_count', 0)
-        formatted['invalid_rows'] = formatted.get('invalid_count', 0)
-        return formatted
-
-    @staticmethod
-    def create(data):
+    def create(data: dict) -> Optional[dict]:
         """Insert a new upload history audit record."""
-        col = academic_upload_history_collection()
-        if col is None:
-            return None
-
         history_id = data.get('id') or f"UPL_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6].upper()}"
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = datetime.now()
+        upload_dt = parse_datetime(data.get('upload_date')) or now
 
-        doc = {
-            'id': history_id,
-            'upload_date': data.get('upload_date') or now_str,
-            'uploaded_by_id': data.get('uploaded_by_id'),
-            'uploaded_by_name': data.get('uploaded_by_name'),
-            'file_name': data.get('file_name'),
-            'total_rows': int(data.get('total_rows', 0)),
-            'successful_updates': int(data.get('successful_updates', 0)),
-            'unmatched_count': int(data.get('unmatched_count', 0)),
-            'invalid_count': int(data.get('invalid_count', 0)),
-            'status': data.get('status', 'Completed'),
-            'details': data.get('details', []),
-            'created_at': now_str
-        }
-
-        col.insert_one(doc)
-        return AcademicUploadHistoryModel._format_doc(doc)
+        with session_scope() as session:
+            record = AcademicUploadHistory(
+                id=history_id,
+                upload_date=upload_dt,
+                uploaded_by_id=data.get('uploaded_by_id'),
+                uploaded_by_name=data.get('uploaded_by_name'),
+                file_name=data.get('file_name'),
+                total_rows=int(data.get('total_rows', 0)),
+                successful_updates=int(data.get('successful_updates', 0)),
+                unmatched_count=int(data.get('unmatched_count', 0)),
+                invalid_count=int(data.get('invalid_count', 0)),
+                status=data.get('status', 'Completed'),
+                details_json=json.dumps(data.get('details', [])) if data.get('details') else None,
+                created_at=now,
+            )
+            session.add(record)
+            session.flush()
+            return record.to_dict()
 
     @staticmethod
-    def list_all(limit=50):
+    def list_all(limit: int = 50) -> List[dict]:
         """List upload history ordered by creation date descending."""
-        col = academic_upload_history_collection()
-        if col is None:
-            return []
-        cursor = col.find({}).sort("created_at", -1).limit(limit)
-        return [AcademicUploadHistoryModel._format_doc(d) for d in cursor]
+        with session_scope() as session:
+            records = (
+                session.query(AcademicUploadHistory)
+                .order_by(AcademicUploadHistory.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return [r.to_dict() for r in records]
 
     @staticmethod
-    def get_by_id(history_id):
+    def get_by_id(history_id: Any) -> Optional[dict]:
         """Retrieve upload history log by ID."""
-        col = academic_upload_history_collection()
-        if col is None or not history_id:
+        if not history_id:
             return None
-        doc = col.find_one({"id": str(history_id)})
-        return AcademicUploadHistoryModel._format_doc(doc)
+        with session_scope() as session:
+            record = session.query(AcademicUploadHistory).filter(AcademicUploadHistory.id == str(history_id)).first()
+            return record.to_dict() if record else None

@@ -1,3 +1,8 @@
+"""
+User Domain Model powered by Microsoft SQL Server (SQLAlchemy ORM).
+Preserves existing authentication, password hashing, OTP generation/verification,
+and role authorization behavior.
+"""
 import os
 import sys
 import uuid
@@ -5,21 +10,23 @@ import re
 import secrets
 import hashlib
 import hmac
+import json
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
-# Ensure project root is in sys.path so 'backend.*' imports succeed in all environments
+# Ensure project root is in sys.path
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from bson import ObjectId
-from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
-try:
-    from backend.database.mongodb import users_collection
-except ImportError:
-    from database.mongodb import users_collection
+from sqlalchemy import or_, and_, func
 
-def validate_college_email(email):
+from backend.database.sql_server import session_scope, SQLServerDB
+from backend.models.db_models import User, parse_datetime, to_iso
+
+
+def validate_college_email(email: str) -> Tuple[bool, Optional[str]]:
     """
     Validate that email address belongs to official institution domain @rajalakshmi.edu.in.
     Returns (is_valid: bool, normalized_email: str).
@@ -37,7 +44,7 @@ def validate_college_email(email):
 
 
 class OtpResult(str):
-    """Enables both tuple unpacking (raw_otp, user, err) and direct string usage (plain_otp)."""
+    """Enables both tuple unpacking (raw_otp, user, err) and direct string usage."""
     def __new__(cls, otp, updated_user=None, err=None):
         instance = super(OtpResult, cls).__new__(cls, otp or '')
         instance.updated_user = updated_user
@@ -51,172 +58,139 @@ class OtpResult(str):
 class UserModel:
     @staticmethod
     def ensure_indexes():
-        col = users_collection()
-        if col is not None:
-            try:
-                col.create_index("email")
-                col.create_index("identifier")
-            except Exception:
-                pass
+        """Schema indexes are handled via Alembic migrations."""
+        pass
 
     @staticmethod
-    def find_by_email(email):
+    def find_by_email(email: str) -> Optional[dict]:
         return UserModel.get_by_email(email)
 
     @staticmethod
-    def _format_doc(doc):
-        if not doc:
+    def _user_to_dict(user: Optional[User]) -> Optional[dict]:
+        if not user:
             return None
-        formatted = dict(doc)
-        if '_id' in formatted:
-            formatted['_id'] = str(formatted['_id'])
-        return formatted
+        return user.to_dict()
 
     @staticmethod
-    def get_by_id(user_id):
-        """Query user by custom ID or MongoDB ObjectId."""
-        col = users_collection()
-        if col is None:
+    def get_by_id(user_id: Any) -> Optional[dict]:
+        """Query user by primary key ID."""
+        if not user_id:
             return None
-        
-        query = {"id": str(user_id)}
-        if ObjectId.is_valid(str(user_id)):
-            query = {"$or": [{"id": str(user_id)}, {"_id": ObjectId(str(user_id))}]}
-        
-        user = col.find_one(query)
-        return UserModel._format_doc(user)
+        clean_id = str(user_id).strip()
+        with session_scope() as session:
+            user = session.query(User).filter(User.id == clean_id).first()
+            if not user:
+                # Also try matching by identifier
+                user = session.query(User).filter(func.lower(User.identifier) == clean_id.lower()).first()
+            return UserModel._user_to_dict(user)
 
     @staticmethod
-    def get_by_email(email):
+    def get_by_email(email: str) -> Optional[dict]:
         """Query user by official college email address (case-insensitive)."""
-        col = users_collection()
-        if col is None or not email:
+        if not email:
             return None
         clean_email = email.strip().lower()
-        escaped = re.escape(clean_email)
-        user = col.find_one({"email": {"$regex": f"^{escaped}$", "$options": "i"}})
-        return UserModel._format_doc(user)
+        with session_scope() as session:
+            user = session.query(User).filter(func.lower(User.email) == clean_email).first()
+            return UserModel._user_to_dict(user)
 
     @staticmethod
-    def get_by_identifier(identifier, role=None):
+    def get_by_identifier(identifier: str, role: Optional[str] = None) -> Optional[dict]:
         """
         Query user by identifier (Register No / Employee ID), email, or ID (case-insensitive).
         Optional role validation.
         """
-        col = users_collection()
-        if col is None:
-            return None
-        
         clean_id = (identifier or '').strip()
         if not clean_id:
             return None
 
-        # Case-insensitive exact regex match
-        escaped_id = re.escape(clean_id)
-        id_regex = {"$regex": f"^{escaped_id}$", "$options": "i"}
+        clean_lower = clean_id.lower()
+        with session_scope() as session:
+            query = session.query(User).filter(
+                or_(
+                    func.lower(User.identifier) == clean_lower,
+                    func.lower(User.email) == clean_lower,
+                    func.lower(User.id) == clean_lower,
+                )
+            )
 
-        or_clauses: list[dict] = [
-            {"identifier": id_regex},
-            {"email": id_regex},
-            {"id": id_regex}
-        ]
+            if role:
+                role_clean = role.strip().lower()
+                query = query.filter(
+                    or_(
+                        func.lower(User.role) == role_clean,
+                        func.lower(User.sub_role) == role_clean,
+                    )
+                )
 
-        if ObjectId.is_valid(clean_id):
-            or_clauses.append({"_id": ObjectId(clean_id)})
-
-        id_query = {"$or": or_clauses}
-
-        if role:
-            escaped_role = re.escape(role.strip())
-            role_regex = {"$regex": f"^{escaped_role}$", "$options": "i"}
-            query = {
-                "$and": [
-                    id_query,
-                    {
-                        "$or": [
-                            {"role": role_regex},
-                            {"sub_role": role_regex}
-                        ]
-                    }
-                ]
-            }
-        else:
-            query = id_query
-
-        user = col.find_one(query)
-        return UserModel._format_doc(user)
+            user = query.first()
+            return UserModel._user_to_dict(user)
 
     @staticmethod
-    def verify_password(user, password):
+    def verify_password(user: Optional[dict], password: str) -> bool:
         """Verify user password hash securely."""
         if not user or not password:
             return False
-        
+
         pwd_hash = user.get('password_hash')
         if pwd_hash:
             return check_password_hash(pwd_hash, password)
-        
-        # Fallback for plain text during migration
+
+        # Legacy fallback
         legacy_pwd = user.get('password')
         if legacy_pwd and legacy_pwd == password:
             return True
-            
+
         return False
 
     @staticmethod
-    def create_user(data):
-        """Insert a new user document into MongoDB users collection."""
-        col = users_collection()
-        if col is None:
-            raise RuntimeError("MongoDB connection not established.")
-
+    def create_user(data: dict) -> Optional[dict]:
+        """Insert a new user record into SQL Server."""
         user_id = data.get('id') or f"USR_{uuid.uuid4().hex[:8].upper()}"
         pwd = data.get('password') or 'password123'
         pwd_hash = generate_password_hash(pwd)
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = datetime.now()
 
         email_verified = data.get('email_verified', False)
         account_status = data.get('account_status', 'ACTIVE' if email_verified else 'UNVERIFIED')
-        verification_token_hash = data.get('verification_token_hash')
 
-        doc = {
-            'id': user_id,
-            'identifier': data.get('identifier') or data.get('registerNumber') or data.get('register_number'),
-            'name': data.get('name') or data.get('fullName') or data.get('full_name'),
-            'email': (data.get('email') or '').strip().lower(),
-            'role': data.get('role', 'Student'),
-            'sub_role': data.get('sub_role', data.get('role', 'Student')),
-            'department': data.get('department', 'Computer Science and Design'),
-            'year': data.get('year', 'III Year'),
-            'section': data.get('section', 'A'),
-            'designation': data.get('designation', data.get('role', 'Student')),
-            'phone': data.get('phone', ''),
-            'password_hash': pwd_hash,
-            'avatar': data.get('avatar'),
-            'email_verified': email_verified,
-            'account_status': account_status,
-            'verification_token_hash': verification_token_hash,
-            'reset_token_hash': None,
-            'reset_token_expires': None,
-            'created_at': now,
-            'updated_at': now
-        }
-
-        col.insert_one(doc)
-        return UserModel.get_by_id(user_id)
+        with session_scope() as session:
+            user = User(
+                id=user_id,
+                identifier=data.get('identifier') or data.get('registerNumber') or data.get('register_number') or user_id,
+                name=data.get('name') or data.get('fullName') or data.get('full_name') or 'User',
+                email=(data.get('email') or '').strip().lower(),
+                role=data.get('role', 'Student'),
+                sub_role=data.get('sub_role', data.get('role', 'Student')),
+                department=data.get('department', 'Computer Science and Design'),
+                year=str(data.get('year', 'III Year')),
+                section=data.get('section', 'A'),
+                designation=data.get('designation', data.get('role', 'Student')),
+                phone=data.get('phone', ''),
+                password_hash=pwd_hash,
+                avatar=data.get('avatar'),
+                status=data.get('status', 'active'),
+                email_verified=email_verified,
+                account_status=account_status,
+                verification_token_hash=data.get('verification_token_hash'),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(user)
+            session.flush()
+            return user.to_dict()
 
     @staticmethod
-    def create(*args, **kwargs):
+    def create(*args, **kwargs) -> Optional[dict]:
         if args and isinstance(args[0], dict):
             return UserModel.create_user(args[0])
         return UserModel.create_user(kwargs)
 
     @staticmethod
-    def create_email_otp(user_or_email, purpose='password change'):
+    def create_email_otp(user_or_email: Any, purpose: str = 'password change') -> OtpResult:
         """
         Generate a cryptographically secure 6-digit OTP with 5-minute expiry.
-        Stores SHA-256 hash in database with rate-limiting protection.
-        Returns OtpResult (raw_otp, user_dict, error_str).
+        Stores SHA-256 hash with cooldown rate limiting.
         """
         if isinstance(user_or_email, dict):
             user = user_or_email
@@ -228,12 +202,7 @@ class UserModel:
         if not user:
             return OtpResult(None, None, "User account not found.")
 
-        col = users_collection()
-        if col is None:
-            return OtpResult(None, None, "Database connection unavailable.")
-
         now = datetime.now()
-        # Rate limit: minimum 60s cooldown between OTP requests (bypassed in automated test runner)
         is_testing = False
         try:
             from flask import current_app
@@ -241,50 +210,48 @@ class UserModel:
         except Exception:
             pass
 
-        # Cooldown duration: 10 seconds in dev/testing for smooth iteration, 60 seconds in production
         cooldown_sec = int(os.environ.get('OTP_COOLDOWN_SECONDS', 10 if os.environ.get('FLASK_ENV', 'development') == 'development' else 60))
         last_sent_str = user.get('otp_last_sent_at')
         if not is_testing and last_sent_str:
-            try:
-                last_sent = datetime.strptime(last_sent_str, '%Y-%m-%d %H:%M:%S')
+            last_sent = parse_datetime(last_sent_str)
+            if last_sent:
                 elapsed = (now - last_sent).total_seconds()
                 if elapsed < cooldown_sec:
                     wait_sec = max(1, int(cooldown_sec - elapsed))
                     return OtpResult(None, user, f"Security cooldown active: please wait {wait_sec} seconds before requesting a new OTP code.")
-            except Exception:
-                pass
 
         # Cryptographically secure 6-digit random code
         raw_otp = f"{secrets.randbelow(900000) + 100000:06d}"
         otp_hash = hashlib.sha256(raw_otp.encode('utf-8')).hexdigest()
-        expires_str = (now + timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S')
-        now_str = now.strftime('%Y-%m-%d %H:%M:%S')
+        expires_dt = now + timedelta(minutes=5)
 
         email_otp_meta = {
             "hash": otp_hash,
-            "expires_at": expires_str,
+            "expires_at": to_iso(expires_dt),
             "attempts": 0,
-            "last_sent_at": now_str,
+            "last_sent_at": to_iso(now),
             "purpose": purpose
         }
 
-        col.update_one(
-            {"id": user['id']},
-            {"$set": {
-                "otp_hash": otp_hash,
-                "otp_expires_at": expires_str,
-                "otp_attempts": 0,
-                "otp_last_sent_at": now_str,
-                "otp_purpose": purpose,
-                "email_otp": email_otp_meta,
-                "updated_at": now_str
-            }}
-        )
-        updated_user = UserModel.get_by_id(user['id']) or user
+        with session_scope() as session:
+            record = session.query(User).filter(User.id == user['id']).first()
+            if record:
+                record.otp_hash = otp_hash
+                record.otp_expires_at = expires_dt
+                record.otp_attempts = 0
+                record.otp_last_sent_at = now
+                record.otp_purpose = purpose
+                record.set_email_otp_dict(email_otp_meta)
+                record.updated_at = now
+                session.flush()
+                updated_user = record.to_dict()
+            else:
+                updated_user = user
+
         return OtpResult(raw_otp, updated_user, None)
 
     @staticmethod
-    def verify_email_otp(user_or_email, otp_code):
+    def verify_email_otp(user_or_email: Any, otp_code: Any) -> Tuple[bool, Optional[str], str]:
         """
         Verify single-use 6-digit OTP with attempt limiting and 5-minute expiry.
         Returns (success: bool, raw_reset_token: str, message: str).
@@ -306,146 +273,103 @@ class UserModel:
         if not user:
             return False, None, "User account not found."
 
-        col = users_collection()
-        if col is None:
-            return False, None, "Database connection unavailable."
-
         now = datetime.now()
-        now_str = now.strftime('%Y-%m-%d %H:%M:%S')
 
-        # Check attempts limit
-        attempts = int(user.get('otp_attempts') or (user.get('email_otp') or {}).get('attempts', 0))
-        if attempts >= 5:
-            col.update_one(
-                {"id": user['id']},
-                {"$unset": {"otp_hash": "", "otp_expires_at": "", "email_otp": ""}}
-            )
-            return False, None, "Maximum OTP verification attempts exceeded. Please request a new OTP."
+        with session_scope() as session:
+            record = session.query(User).filter(User.id == user['id']).first()
+            if not record:
+                return False, None, "User account not found."
 
-        # Check expiration
-        expires_str = user.get('otp_expires_at') or (user.get('email_otp') or {}).get('expires_at')
-        if not expires_str or expires_str < now_str:
-            col.update_one(
-                {"id": user['id']},
-                {"$unset": {"otp_hash": "", "otp_expires_at": "", "email_otp": ""}}
-            )
-            return False, None, "OTP has expired. OTPs are valid for 5 minutes only. Please request a new code."
+            # Check attempts
+            attempts = record.otp_attempts or 0
+            if attempts >= 5:
+                record.otp_hash = None
+                record.otp_expires_at = None
+                record.email_otp_json = None
+                return False, None, "Maximum OTP verification attempts exceeded. Please request a new OTP."
 
-        # Verify hash using constant-time comparison
-        stored_hash = user.get('otp_hash') or (user.get('email_otp') or {}).get('hash')
-        candidate_hash = hashlib.sha256(clean_otp.encode('utf-8')).hexdigest()
-        if not stored_hash or not hmac.compare_digest(stored_hash, candidate_hash):
-            col.update_one(
-                {"id": user['id']},
-                {"$inc": {"otp_attempts": 1, "email_otp.attempts": 1}}
-            )
-            remaining = max(0, 4 - attempts)
-            return False, None, f"Invalid OTP code. {remaining} attempt(s) remaining."
+            # Check expiry
+            if not record.otp_expires_at or record.otp_expires_at < now:
+                record.otp_hash = None
+                record.otp_expires_at = None
+                record.email_otp_json = None
+                return False, None, "OTP has expired. OTPs are valid for 5 minutes only. Please request a new code."
 
-        # OTP verified! Generate single-use reset token valid for 5 minutes
-        raw_token = secrets.token_urlsafe(32)
-        token_hash = hashlib.sha256(raw_token.encode('utf-8')).hexdigest()
-        reset_expires = (now + timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S')
+            # Verify hash
+            candidate_hash = hashlib.sha256(clean_otp.encode('utf-8')).hexdigest()
+            if not record.otp_hash or not hmac.compare_digest(record.otp_hash, candidate_hash):
+                record.otp_attempts = (record.otp_attempts or 0) + 1
+                remaining = max(0, 4 - attempts)
+                return False, None, f"Invalid OTP code. {remaining} attempt(s) remaining."
 
-        col.update_one(
-            {"id": user['id']},
-            {
-                "$set": {
-                    "reset_token_hash": token_hash,
-                    "reset_token_expires": reset_expires,
-                    "otp_verified_at": now_str,
-                    "updated_at": now_str
-                },
-                "$unset": {
-                    "otp_hash": "",
-                    "otp_expires_at": "",
-                    "otp_attempts": "",
-                    "email_otp": ""
-                }
-            }
-        )
-        return True, raw_token, "OTP verified successfully."
+            # OTP verified: generate single-use reset token
+            raw_token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(raw_token.encode('utf-8')).hexdigest()
+            reset_expires = now + timedelta(minutes=5)
+
+            record.reset_token_hash = token_hash
+            record.reset_token_expires = reset_expires
+            record.otp_verified_at = now
+            record.otp_hash = None
+            record.otp_expires_at = None
+            record.otp_attempts = 0
+            record.email_otp_json = None
+            record.updated_at = now
+
+            return True, raw_token, "OTP verified successfully."
 
     @staticmethod
-    def create_password_reset_token(email):
-        """
-        Generate a cryptographically secure single-use password reset token.
-        Stores SHA-256 hash in database with 1-hour expiration.
-        Returns (raw_token, user_name, user_dict) or (None, None, None).
-        """
+    def create_password_reset_token(email: str) -> Tuple[Optional[str], Optional[str], Optional[dict]]:
+        """Generate a cryptographically secure single-use password reset token."""
         user = UserModel.get_by_email(email)
         if not user:
             return None, None, None
 
         raw_token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw_token.encode('utf-8')).hexdigest()
-        expires = (datetime.now() + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+        expires = datetime.now() + timedelta(hours=1)
 
-        col = users_collection()
-        if col is None:
-            return None, None, None
-        col.update_one(
-            {"id": user['id']},
-            {"$set": {
-                "reset_token_hash": token_hash,
-                "reset_token_expires": expires,
-                "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }}
-        )
-        return raw_token, user.get('name'), user
+        with session_scope() as session:
+            record = session.query(User).filter(User.id == user['id']).first()
+            if record:
+                record.reset_token_hash = token_hash
+                record.reset_token_expires = expires
+                record.updated_at = datetime.now()
+                return raw_token, record.name, record.to_dict()
+
+        return None, None, None
 
     @staticmethod
-    def reset_password(token, new_password):
-        """
-        Validate single-use reset token and update user password.
-        Returns (success: bool, message_or_error: str).
-        """
+    def reset_password(token: str, new_password: str) -> Tuple[bool, str]:
+        """Validate single-use reset token and update user password."""
         if not token or not new_password:
             return False, "Token and new password are required."
 
         token_hash = hashlib.sha256(token.strip().encode('utf-8')).hexdigest()
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = datetime.now()
 
-        col = users_collection()
-        if col is None:
-            return False, "Database connection unavailable."
-        user = col.find_one({
-            "$or": [
-                {
-                    "reset_token_hash": token_hash,
-                    "reset_token_expires": {"$gte": now_str}
-                },
-                {"id": token.strip()},
-                {"email": token.strip().lower()}
-            ]
-        })
+        with session_scope() as session:
+            user = session.query(User).filter(
+                or_(
+                    and_(User.reset_token_hash == token_hash, User.reset_token_expires >= now),
+                    User.id == token.strip(),
+                    func.lower(User.email) == token.strip().lower(),
+                )
+            ).first()
 
-        if not user:
-            return False, "Invalid or expired password reset token."
+            if not user:
+                return False, "Invalid or expired password reset token."
 
-        new_pwd_hash = generate_password_hash(new_password)
-        col.update_one(
-            {"_id": user['_id']},
-            {
-                "$set": {
-                    "password_hash": new_pwd_hash,
-                    "password_changed_at": now_str,
-                    "updated_at": now_str
-                },
-                "$unset": {
-                    "reset_token_hash": "",
-                    "reset_token_expires": ""
-                }
-            }
-        )
-        return True, "Password has been reset successfully. Please log in with your new password."
+            user.password_hash = generate_password_hash(new_password)
+            user.password_changed_at = now
+            user.reset_token_hash = None
+            user.reset_token_expires = None
+            user.updated_at = now
+            return True, "Password has been reset successfully. Please log in with your new password."
 
     @staticmethod
-    def change_password(user_id_or_identifier, new_password, current_password=None):
-        """
-        Change user password. Verifies current password if supplied.
-        Returns (success: bool, message_or_error: str).
-        """
+    def change_password(user_id_or_identifier: Any, new_password: str, current_password: Optional[str] = None) -> Tuple[bool, str]:
+        """Change user password. Verifies current password if supplied."""
         user = UserModel.get_by_id(user_id_or_identifier) or UserModel.get_by_identifier(user_id_or_identifier)
         if not user:
             return False, "User account not found."
@@ -454,88 +378,69 @@ class UserModel:
             if not UserModel.verify_password(user, current_password):
                 return False, "Current password is incorrect."
 
-        col = users_collection()
-        if col is None:
-            return False, "Database connection unavailable."
-        new_pwd_hash = generate_password_hash(new_password)
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with session_scope() as session:
+            record = session.query(User).filter(User.id == user['id']).first()
+            if not record:
+                return False, "User account not found."
 
-        col.update_one(
-            {"id": user['id']},
-            {"$set": {
-                "password_hash": new_pwd_hash,
-                "password_changed_at": now_str,
-                "updated_at": now_str
-            }}
-        )
-        return True, "Password updated successfully."
+            record.password_hash = generate_password_hash(new_password)
+            record.password_changed_at = datetime.now()
+            record.updated_at = datetime.now()
+            return True, "Password updated successfully."
 
     @staticmethod
-    def set_account_status(user_id_or_identifier, status):
+    def set_account_status(user_id_or_identifier: Any, status: str) -> bool:
         """Update account status (e.g. ACTIVE, DISABLED, UNVERIFIED)."""
         user = UserModel.get_by_id(user_id_or_identifier) or UserModel.get_by_identifier(user_id_or_identifier)
         if not user:
             return False
-        col = users_collection()
-        if col is None:
-            return False
-        col.update_one(
-            {"id": user['id']},
-            {"$set": {
-                "account_status": status,
-                "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }}
-        )
-        return True
+
+        with session_scope() as session:
+            record = session.query(User).filter(User.id == user['id']).first()
+            if record:
+                record.account_status = status
+                record.updated_at = datetime.now()
+                return True
+        return False
 
     @staticmethod
-    def verify_email(email_or_identifier):
+    def verify_email(email_or_identifier: str) -> bool:
         """Mark user account as email-verified and ACTIVE."""
         user = UserModel.get_by_email(email_or_identifier) or UserModel.get_by_identifier(email_or_identifier)
         if not user:
             return False
-        col = users_collection()
-        if col is None:
-            return False
-        col.update_one(
-            {"id": user['id']},
-            {"$set": {
-                "email_verified": True,
-                "account_status": "ACTIVE",
-                "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }}
-        )
-        return True
+
+        with session_scope() as session:
+            record = session.query(User).filter(User.id == user['id']).first()
+            if record:
+                record.email_verified = True
+                record.account_status = 'ACTIVE'
+                record.updated_at = datetime.now()
+                return True
+        return False
 
     @staticmethod
-    def to_safe_dict(user):
+    def to_safe_dict(user: Optional[dict]) -> Optional[dict]:
         """Strip password hashes from user dictionary before sending in API response."""
         if not user:
             return None
         safe = dict(user)
         safe.pop('password_hash', None)
         safe.pop('password', None)
-        if '_id' in safe:
-            safe['_id'] = str(safe['_id'])
+        safe.pop('reset_token_hash', None)
+        safe.pop('otp_hash', None)
         return safe
 
     @staticmethod
-    def list_all():
+    def list_all() -> List[dict]:
         """List all users with safe projections."""
-        col = users_collection()
-        if col is None:
-            return []
-        
-        cursor = col.find({}, {"password_hash": 0, "password": 0}).sort("created_at", 1)
-        return [UserModel._format_doc(u) for u in cursor]
+        with session_scope() as session:
+            users = session.query(User).order_by(User.created_at.asc()).all()
+            return [UserModel.to_safe_dict(u.to_dict()) for u in users]
 
     @staticmethod
-    def update_user(user_id, updates):
-        """Update user fields safely and authoritatively in MongoDB."""
-        col = users_collection()
-        if col is None:
-            return None
-
+    def update_user(user_id: Any, updates: dict) -> Optional[dict]:
+        """Update user fields safely and authoritatively in SQL Server."""
         target = UserModel.get_by_id(user_id) or UserModel.get_by_identifier(user_id)
         if not target:
             return None
@@ -548,12 +453,38 @@ class UserModel:
             pwd = clean_updates.pop('password')
             if pwd and str(pwd).strip():
                 clean_updates['password_hash'] = generate_password_hash(str(pwd).strip())
-                clean_updates.pop('password', None)
-            else:
-                clean_updates.pop('password', None)
 
-        clean_updates['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with session_scope() as session:
+            record = session.query(User).filter(User.id == target['id']).first()
+            if not record:
+                return None
 
-        query = {"_id": ObjectId(target['_id'])} if ObjectId.is_valid(target.get('_id', '')) else {"id": target.get('id')}
-        col.update_one(query, {"$set": clean_updates})
-        return UserModel.get_by_id(target.get('id')) or UserModel.get_by_identifier(clean_updates.get('identifier', target.get('identifier')))
+            for key, val in clean_updates.items():
+                if hasattr(record, key):
+                    # Handle datetime parsing if string
+                    if key in ('last_login', 'password_changed_at', 'reset_token_expires', 'last_academic_update'):
+                        setattr(record, key, parse_datetime(val))
+                    else:
+                        setattr(record, key, val)
+
+            record.updated_at = datetime.now()
+            session.flush()
+            return record.to_dict()
+
+    @staticmethod
+    def delete_user(user_id: Any) -> bool:
+        """Delete user by ID."""
+        target = UserModel.get_by_id(user_id) or UserModel.get_by_identifier(user_id)
+        if not target:
+            return False
+
+        with session_scope() as session:
+            record = session.query(User).filter(User.id == target['id']).first()
+            if record:
+                session.delete(record)
+                return True
+        return False
+
+    # Alias list_all to get_all for caller compatibility
+    get_all = list_all
+

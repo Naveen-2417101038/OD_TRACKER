@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 try:
     from backend.config import Config
-    from backend.database.mongodb import init_db, MongoDB
+    from backend.database.sql_server import init_db, SQLServerDB
     from backend.routes.health import health_bp
     from backend.routes.auth import auth_bp
     from backend.routes.od_requests import od_requests_bp
@@ -20,7 +20,7 @@ try:
 except ImportError as e:
     if "No module named 'backend'" in str(e):
         from config import Config
-        from database.mongodb import init_db, MongoDB
+        from database.sql_server import init_db, SQLServerDB
         from routes.health import health_bp
         from routes.auth import auth_bp
         from routes.od_requests import od_requests_bp
@@ -53,9 +53,14 @@ def create_app(config_class=Config):
         supports_credentials=True
     )
 
-    # Initialize MongoDB Atlas Connection, Schema & Seed Initial Data
+    # Initialize Microsoft SQL Server Connection & Schema
     with app.app_context():
         init_db()
+
+    # Teardown scoped SQLAlchemy session after each request
+    @app.teardown_appcontext
+    def shutdown_session(exception=None):
+        SQLServerDB.close_session()
 
     # Initialize background 24-hour certificate deadline checker daemon
     try:
@@ -111,14 +116,15 @@ def create_app(config_class=Config):
             return send_from_directory(frontend_dist_dir, 'index.html')
 
         # Fallback root API message if frontend build is not present (e.g. purely backend dev)
-        status = MongoDB.get_status()
+        status = SQLServerDB.get_status()
         return jsonify({
             "message": "OD Tracking System Backend API is active.",
             "health_check": "/api/health",
             "database": {
-                "type": "MongoDB Atlas",
+                "type": "Microsoft SQL Server",
                 "connected": status.get("connected", False),
-                "state": status.get("connection_state")
+                "state": status.get("connection_state"),
+                "database": status.get("database")
             },
             "docs": "REST API for Rajalakshmi Engineering College OD Management System"
         })

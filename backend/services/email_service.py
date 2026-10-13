@@ -128,31 +128,14 @@ def log_notification_record(
     error_details: str | None = None
 ):
     """
-    Log an audit record of notification delivery to persistent MongoDB notification collection.
+    Log an audit record of notification delivery to Microsoft SQL Server notifications table.
     Tracks Notification ID, Recipient User ID, Notification Type, Related OD Request ID,
     Creation Timestamp, Delivery Status, Provider Message ID, Retry Count, and Safe Failure Details.
     """
     try:
-        try:
-            # pyrefly: ignore [missing-import]
-            from backend.database.mongodb import notifications_collection  # type: ignore
-        except ImportError:
-            # pyrefly: ignore [missing-import]
-            from database.mongodb import notifications_collection  # type: ignore
-
-        col = notifications_collection()
-        if col is None:
-            return None
-
-        import uuid
-        from datetime import datetime
-
-        notif_id = f"NOTIF_{uuid.uuid4().hex[:10].upper()}"
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        doc = {
-            "id": notif_id,
-            "user_id": str(user_id) if user_id else str(to_email),
+        from backend.models.notification import NotificationModel
+        notif_data = {
+            "user_id": str(user_id) if user_id and not ('@' in str(user_id)) else None,
             "recipient_email": str(to_email),
             "type": notification_type,
             "notification_type": notification_type,
@@ -167,12 +150,9 @@ def log_notification_record(
             "retry_count": 0,
             "error_details": error_details[:500] if error_details else None,
             "is_read": 0,
-            "created_at": now_str,
-            "updated_at": now_str
         }
-
-        col.insert_one(doc)
-        return notif_id
+        res = NotificationModel.create(notif_data)
+        return res.get('id') if res else None
     except Exception as e:
         print(f"[-] Failed to log notification record: {e}")
         return None
@@ -306,12 +286,30 @@ def send_email(
     return True
 
 
-def send_email_async(to_email: str, subject: str, html_body: str, text_body: str):
+def send_email_async(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    recipient_name: str | None = None,
+    related_request_id: str | None = None,
+    notification_type: str = "general",
+    user_id: str | None = None
+):
     """Dispatch email in a daemon background thread so HTTP response is non-blocking."""
     def _worker():
         try:
             print(f"[EMAIL ASYNC THREAD] Background dispatch started for <{to_email}>", flush=True)
-            res = send_email(to_email, subject, html_body, text_body)
+            res = send_email(
+                to_email,
+                subject,
+                html_body,
+                text_body,
+                recipient_name=recipient_name,
+                related_request_id=related_request_id,
+                notification_type=notification_type,
+                user_id=user_id
+            )
             print(f"[EMAIL ASYNC THREAD] Background dispatch finished: result={res}", flush=True)
         except Exception as e:
             print(f"[-] [EMAIL ASYNC THREAD ERROR] Exception sending to {to_email}: {e}", flush=True)
@@ -636,7 +634,7 @@ REC OD Tracking System
     """
 
     html_body = _render_base_email("OD Application Submitted", "OD Submission", student_name, main_html, dash_url, "Track My Request")
-    return send_email_async(to_email, subject, html_body, text_body)
+    return send_email_async(to_email, subject, html_body, text_body, recipient_name=student_name, related_request_id=request_id, notification_type="OD_Submitted")
 
 
 def send_new_od_mentor_notification(mentor_email: str, mentor_name: str, student_name: str, event_name: str, dates: str, request_id: str):
@@ -674,7 +672,7 @@ REC OD Tracking System
     """
 
     html_body = _render_base_email("New OD Request Awaiting Mentor Review", "Mentor Review Required", mentor_name, main_html, review_url, "Open Faculty Portal")
-    return send_email_async(mentor_email, subject, html_body, text_body)
+    return send_email_async(mentor_email, subject, html_body, text_body, recipient_name=mentor_name, related_request_id=request_id, notification_type="OD_Mentor_Review")
 
 
 def send_od_mentor_approved_student_notification(to_email: str, student_name: str, event_name: str, remarks: str = ""):
@@ -736,7 +734,7 @@ REC OD Tracking System
     """
 
     html_body = _render_base_email("OD Awaiting Class Incharge Review", "Action Required", ci_name, main_html, ci_url, "Review Request")
-    return send_email_async(ci_email, subject, html_body, text_body)
+    return send_email_async(ci_email, subject, html_body, text_body, recipient_name=ci_name, related_request_id=request_id, notification_type="OD_CI_Review")
 
 
 def send_od_mentor_rejected_student_notification(to_email: str, student_name: str, event_name: str, reason: str, request_id: str = "N/A", event_date: str = "N/A"):
@@ -810,7 +808,7 @@ REC OD Tracking System
     """
 
     html_body = _render_base_email("OD Awaiting HOD Sanction", "Executive Sanction Required", hod_name, main_html, hod_url, "Open HOD Executive Dashboard")
-    return send_email_async(hod_email, subject, html_body, text_body)
+    return send_email_async(hod_email, subject, html_body, text_body, recipient_name=hod_name, related_request_id=request_id, notification_type="OD_HOD_Sanction")
 
 
 def send_od_ci_rejected_student_notification(to_email: str, student_name: str, event_name: str, reason: str, request_id: str = "N/A", event_date: str = "N/A"):
@@ -899,7 +897,7 @@ OD Tracking Application
     """
 
     html_body = _render_base_email("OD Request Approved — Certificate Submission Required", "Approval Granted", student_name, main_html, cert_url, "Upload Certificate Now")
-    return send_email_async(to_email, subject, html_body, text_body)
+    return send_email_async(to_email, subject, html_body, text_body, recipient_name=student_name, related_request_id=request_id if request_id != "N/A" else None, notification_type="OD_HOD_Approved")
 
 
 def send_certificate_due_reminder_email(
@@ -1259,20 +1257,11 @@ def get_student_info(student_id_or_doc):
 def get_mentors_for_department(department: str | None = None):
     """Find Mentor users matching department."""
     try:
-        try:
-            # pyrefly: ignore [missing-import]
-            from backend.database.mongodb import users_collection  # type: ignore
-        except ImportError:
-            # pyrefly: ignore [missing-import]
-            from database.mongodb import users_collection  # type: ignore
-        col = users_collection()
-        if col is None:
-            return []
-        query = {"$or": [{"role": {"$regex": "^mentor$", "$options": "i"}}, {"sub_role": {"$regex": "^mentor$", "$options": "i"}}]}
+        from backend.models.user import UserModel
+        users = UserModel.get_all(role='Mentor')
         if department:
-            query = {"$and": [query, {"department": {"$regex": f"^{department.strip()}$", "$options": "i"}}]}
-        cursor = col.find(query)
-        return [(u.get('email'), u.get('name')) for u in cursor if u.get('email')]
+            users = [u for u in users if (u.get('department') or '').strip().lower() == department.strip().lower()]
+        return [(u.get('email'), u.get('name')) for u in users if u.get('email')]
     except Exception:
         return []
 
@@ -1280,20 +1269,11 @@ def get_mentors_for_department(department: str | None = None):
 def get_class_incharges_for_department(department: str | None = None, section: str | None = None):
     """Find Class Incharge users matching department/section."""
     try:
-        try:
-            # pyrefly: ignore [missing-import]
-            from backend.database.mongodb import users_collection  # type: ignore
-        except ImportError:
-            # pyrefly: ignore [missing-import]
-            from database.mongodb import users_collection  # type: ignore
-        col = users_collection()
-        if col is None:
-            return []
-        query = {"$or": [{"role": {"$regex": "^class incharge$", "$options": "i"}}, {"sub_role": {"$regex": "^class incharge$", "$options": "i"}}]}
+        from backend.models.user import UserModel
+        users = UserModel.get_all(role='Class Incharge')
         if department:
-            query = {"$and": [query, {"department": {"$regex": f"^{department.strip()}$", "$options": "i"}}]}
-        cursor = col.find(query)
-        return [(u.get('email'), u.get('name')) for u in cursor if u.get('email')]
+            users = [u for u in users if (u.get('department') or '').strip().lower() == department.strip().lower()]
+        return [(u.get('email'), u.get('name')) for u in users if u.get('email')]
     except Exception:
         return []
 
@@ -1301,20 +1281,11 @@ def get_class_incharges_for_department(department: str | None = None, section: s
 def get_hods_for_department(department: str | None = None):
     """Find HOD users matching department."""
     try:
-        try:
-            # pyrefly: ignore [missing-import]
-            from backend.database.mongodb import users_collection  # type: ignore
-        except ImportError:
-            # pyrefly: ignore [missing-import]
-            from database.mongodb import users_collection  # type: ignore
-        col = users_collection()
-        if col is None:
-            return []
-        query = {"$or": [{"role": {"$regex": "^hod$", "$options": "i"}}, {"sub_role": {"$regex": "^hod$", "$options": "i"}}]}
+        from backend.models.user import UserModel
+        users = UserModel.get_all(role='HOD')
         if department:
-            query = {"$and": [query, {"department": {"$regex": f"^{department.strip()}$", "$options": "i"}}]}
-        cursor = col.find(query)
-        return [(u.get('email'), u.get('name')) for u in cursor if u.get('email')]
+            users = [u for u in users if (u.get('department') or '').strip().lower() == department.strip().lower()]
+        return [(u.get('email'), u.get('name')) for u in users if u.get('email')]
     except Exception:
         return []
 
@@ -1322,17 +1293,9 @@ def get_hods_for_department(department: str | None = None):
 def get_admin_users():
     """Find Admin users."""
     try:
-        try:
-            # pyrefly: ignore [missing-import]
-            from backend.database.mongodb import users_collection  # type: ignore
-        except ImportError:
-            # pyrefly: ignore [missing-import]
-            from database.mongodb import users_collection  # type: ignore
-        col = users_collection()
-        if col is None:
-            return []
-        cursor = col.find({"role": {"$regex": "^admin$", "$options": "i"}})
-        return [(u.get('email'), u.get('name')) for u in cursor if u.get('email')]
+        from backend.models.user import UserModel
+        users = UserModel.get_all(role='Admin')
+        return [(u.get('email'), u.get('name')) for u in users if u.get('email')]
     except Exception:
         return []
 
