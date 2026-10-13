@@ -102,11 +102,11 @@ export const FacultyLayout: React.FC<FacultyLayoutProps> = ({ children }) => {
         
         {/* Logo Section */}
         <div className="h-16 flex items-center gap-2.5 px-6 border-b border-slate-200 bg-slate-900 text-white">
-          <div className="bg-primary-600 p-1.5 rounded-lg text-white shadow-sm shadow-primary-900">
+          <div className="bg-primary-600 p-2 rounded-xl text-white shadow-sm shadow-primary-900">
             <Landmark className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="font-bold text-base text-white tracking-tight leading-none">OD Track</h1>
+            <h1 className="font-black text-base text-white tracking-tight leading-none">OD-TRACKER</h1>
             <span className="text-[10px] text-primary-400 font-bold tracking-wider uppercase">Faculty Portal</span>
           </div>
         </div>
