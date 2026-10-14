@@ -570,6 +570,26 @@ class ODRequestModel:
                 .order_by(ODRequest.created_at.desc())
                 .all()
             )
+            if len(records) == 0 and user and str(user.role).lower() == 'student':
+                try:
+                    from backend.scripts.sync_data_registry import seed_starter_requests_for_student
+                    seed_starter_requests_for_student(user.id)
+                    records = (
+                        session.query(ODRequest)
+                        .filter(
+                            or_(
+                                ODRequest.student_id == uid,
+                                ODRequest.student_id == uident,
+                                func.lower(ODRequest.student_reg_no) == uident.lower(),
+                                func.lower(ODRequest.student_reg_no) == uid.lower()
+                            )
+                        )
+                        .order_by(ODRequest.created_at.desc())
+                        .all()
+                    )
+                except Exception as seed_err:
+                    print(f"[!] Auto-seed notice for student {uident}: {seed_err}")
+
             result = []
             for r in records:
                 d = ODRequestModel.to_dict(r.to_dict())
