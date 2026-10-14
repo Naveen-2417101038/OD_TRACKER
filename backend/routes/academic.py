@@ -269,16 +269,11 @@ def get_academic_students_roster():
     user_role = active_user.get('role')
     user_dept = (active_user.get('department') or '').strip().lower()
 
-    col = users_collection()
-    if col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable'}), 500
-
-    query = {"role": {"$regex": "^student$", "$options": "i"}}
+    dept_filter = None
     if user_role in ['Class Incharge', 'Mentor'] and user_dept:
-        dept_str = str(active_user.get('department') or '')
-        query["department"] = {"$regex": f"^{re.escape(dept_str)}$", "$options": "i"}
+        dept_filter = active_user.get('department')
 
-    students = list(col.find(query, {"password_hash": 0, "password": 0}).sort("identifier", 1))
+    students = UserModel.list_all(role='Student', department=dept_filter)
 
     # Retrieve all academic records
     acad_docs = {a['student_id']: a for a in AcademicRecordModel.list_all() if a and 'student_id' in a}
@@ -342,8 +337,9 @@ def get_academic_students_roster():
     }), 200
 
 
-# ─── 6. Student Self View: /api/academic/me ────────────────────────────────────
+# ─── 6. Student Self View: /api/academic/me & /api/academic/my ────────────────
 @academic_bp.route('/me', methods=['GET'])
+@academic_bp.route('/my', methods=['GET'])
 @role_required('Student')
 def get_my_academic_details():
     """Allow authenticated student to view their own attendance, CAT marks, and OD allowance."""

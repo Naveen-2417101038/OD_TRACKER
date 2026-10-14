@@ -652,30 +652,21 @@ def get_admin_faculty():
     search = (request.args.get('search') or '').strip().lower()
 
     all_users = UserModel.get_all()
-    faculty_roles = {'mentor', 'class incharge', 'class_incharge', 'hod', 'counsellor', 'faculty'}
-    faculty_list = [u for u in all_users if (u.get('role') or '').lower() in faculty_roles]
+    faculty_roles = {'mentor', 'class incharge', 'class_incharge', 'hod', 'counsellor', 'faculty', 'admin'}
+    faculty_pool = [u for u in all_users if (u.get('role') or '').lower() in faculty_roles]
 
     docs = []
-    for f in faculty_list:
+    for f in faculty_pool:
         if role_filter and role_filter.lower() != 'all' and (f.get('role') or '').lower() != role_filter.lower():
             continue
         if dept_filter and dept_filter.lower() != 'all' and (f.get('department') or '').lower() != dept_filter.lower():
             continue
         if search:
-            match_str = f"{f.get('name', '')} {f.get('identifier', '')} {f.get('email', '')}".lower()
+            match_str = f"{f.get('name', '')} {f.get('identifier', '')} {f.get('email', '')} {f.get('designation', '')}".lower()
             if search not in match_str:
                 continue
         docs.append(f)
 
-    if search:
-        esc = re.escape(search)
-        query["$or"] = [
-            {"name": {"$regex": esc, "$options": "i"}},
-            {"identifier": {"$regex": esc, "$options": "i"}},
-            {"email": {"$regex": esc, "$options": "i"}}
-        ]
-
-    docs = list(col.find(query, {"password_hash": 0, "password": 0}).sort("name", 1))
     faculty_list = []
     for d in docs:
         faculty_list.append({

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getCertificates, uploadCertificate, getODRequests, simulateVerifyCertificate, getAuthSession } from '../data/mockData';
+import { getCertificates, uploadCertificate, getODRequests, simulateVerifyCertificate, getAuthSession, syncODRequestsFromBackend } from '../data/mockData';
 import { CertificateItem, ODRequest } from '../types/types';
 import { Card } from '../components/Card';
 import { StatusBadge } from '../components/StatusBadge';
@@ -22,9 +22,9 @@ export const Certificates: React.FC = () => {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [now, setNow] = useState<Date>(new Date());
 
-  const loadData = () => {
+  const loadData = async () => {
+    // Initial local cache
     setCertificates(getCertificates());
-    // Only show HOD Approved requests eligible for certificate upload
     setRequests(
       getODRequests().filter(r => 
         r.status === 'HOD Approved - Certificate Pending' || 
@@ -33,6 +33,41 @@ export const Certificates: React.FC = () => {
         r.status === 'Approved'
       )
     );
+
+    // Sync live from Azure SQL / SQL Server backend
+    try {
+      const backendReqs = await syncODRequestsFromBackend();
+      if (backendReqs && Array.isArray(backendReqs) && backendReqs.length > 0) {
+        setRequests(backendReqs.filter(r => 
+          r.status === 'HOD Approved - Certificate Pending' || 
+          r.status === 'HOD Approved' ||
+          r.status === 'Certificate Submitted' ||
+          r.status === 'Approved'
+        ));
+
+        const liveCerts: CertificateItem[] = backendReqs
+          .filter(r => r.certificateUrl || r.certificateStatus === 'Verified' || r.certificateStatus === 'Pending Verification')
+          .map(r => ({
+            id: `CERT_${r.id}`,
+            requestId: r.id,
+            eventName: r.eventName,
+            studentName: r.studentName,
+            studentRegNo: r.studentRegisterNo || r.studentId,
+            certificateName: r.certificateUrl ? r.certificateUrl.split('/').pop() || 'certificate.pdf' : 'certificate.pdf',
+            fileUrl: r.certificateUrl || '',
+            uploadDate: r.certificateSubmittedAt || (r as any).updatedAt || r.createdAt || new Date().toISOString(),
+            status: r.certificateStatus === 'Verified' ? 'Verified' : 'Pending Verification',
+            verifiedByFacultyName: r.stages?.mentor?.faculty_name || 'Dr. A. Rajesh',
+            verifiedAt: r.stages?.mentor?.date || ''
+          }));
+
+        if (liveCerts.length > 0) {
+          setCertificates(liveCerts);
+        }
+      }
+    } catch (err) {
+      console.warn('Could not sync student certificates from backend:', err);
+    }
   };
 
   useEffect(() => {
@@ -164,11 +199,20 @@ export const Certificates: React.FC = () => {
         </button>
       </div>
 
-      {/* Safety Banner */}
-      <div className="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-2xl flex items-start gap-3">
-        <ShieldAlert className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-        <div className="text-xs leading-normal">
-          <strong className="font-bold">Administrative Rule:</strong> Uploaded certificates are <strong className="font-bold">NOT automatically trusted</strong> by the college portal. Academic Record Officers will verify the validity of your uploaded documents. Approved OD counts remain tentative until verified.
+      {/* Safety & 24-Hour Policy Banners */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-2xl flex items-start gap-3">
+          <ShieldAlert className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="text-xs leading-normal">
+            <strong className="font-bold">Administrative Rule:</strong> Uploaded certificates are <strong className="font-bold">NOT automatically trusted</strong> by the college portal. Academic Record Officers will verify the validity of your uploaded documents. Approved OD counts remain tentative until verified.
+          </div>
+        </div>
+
+        <div className="bg-rose-50 border border-rose-200 text-rose-900 p-4 rounded-2xl flex items-start gap-3">
+          <Clock className="w-5 h-5 text-rose-600 flex-shrink-0 mt-0.5 animate-pulse" />
+          <div className="text-xs leading-normal">
+            <strong className="font-bold text-rose-950">24-Hour Submission Policy:</strong> For HOD-approved ODs, students <strong className="font-bold text-rose-950">must upload the participation certificate within 24 hours of the event end date</strong>. If the certificate is not submitted after 24 hours of the event date, the OD request is <strong className="font-bold text-rose-950">automatically rejected</strong>.
+          </div>
         </div>
       </div>
 

@@ -16,6 +16,8 @@ import {
   apiApproveODRequestByMentor, 
   apiRejectODRequestByMentor,
   apiGetAcademicStudents,
+  apiGetMentorCertificates,
+  apiVerifyStudentCertificate,
   AcademicStudentItem
 } from '../../services/api';
 import { ODRequest, CertificateItem, Faculty } from '../../types/types';
@@ -75,12 +77,34 @@ export const MentorDashboard: React.FC = () => {
         setData({
           all: backendRes.requests,
           pending: backendRes.pending || backendRes.requests.filter(r => r.status === 'Pending'),
-          approved: backendRes.approved || backendRes.requests.filter(r => 'Approved' in r.status),
-          rejected: backendRes.rejected || backendRes.requests.filter(r => 'Rejected' in r.status),
+          approved: backendRes.approved || backendRes.requests.filter(r => (r.status || '').includes('Approved')),
+          rejected: backendRes.rejected || backendRes.requests.filter(r => (r.status || '').includes('Rejected')),
         });
       }
     } catch (err) {
       console.warn('Could not sync mentor requests from backend:', err);
+    }
+
+    // Sync certificates from backend
+    try {
+      const certRes = await apiGetMentorCertificates(session?.token);
+      if (certRes.success && Array.isArray(certRes.certificates) && certRes.certificates.length > 0) {
+        setCertificates(certRes.certificates.map((c: any) => ({
+          id: c.id,
+          requestId: c.requestId || c.request_id,
+          studentName: c.studentName || c.student_name,
+          studentRegNo: c.studentRegNo || c.student_reg_no,
+          eventName: c.eventName || c.event_name,
+          certificateName: c.certificateName || 'Certificate.pdf',
+          status: c.status,
+          fileUrl: c.certificateUrl || c.certificate_file_url,
+          uploadDate: c.uploadDate || c.upload_date || new Date().toISOString(),
+          verifiedBy: c.verifiedByName || c.verified_by_name,
+          verifiedDate: c.verifiedAt || c.verified_at,
+        } as CertificateItem)));
+      }
+    } catch (err) {
+      console.warn('Could not sync mentor certificates:', err);
     }
 
     // Sync academic records
@@ -157,9 +181,20 @@ export const MentorDashboard: React.FC = () => {
     }
   };
 
-  const handleVerifyCert = (cert: CertificateItem, status: 'Verified' | 'Rejected') => {
-    verifyCertificateByFaculty(cert.id, faculty, status);
-    showToast(`Certificate ${cert.id} marked as ${status}`, status === 'Verified' ? 'success' : 'error');
+  const handleVerifyCert = async (cert: CertificateItem, status: 'Verified' | 'Rejected') => {
+    const session = getAuthSession();
+    try {
+      const res = await apiVerifyStudentCertificate(cert.requestId, status, '', session?.token);
+      if (res.success) {
+        showToast(res.message || `Certificate for ${cert.requestId} marked as ${status}`, status === 'Verified' ? 'success' : 'error');
+      } else {
+        verifyCertificateByFaculty(cert.id, faculty, status);
+        showToast(`Certificate ${cert.id} marked as ${status}`, status === 'Verified' ? 'success' : 'error');
+      }
+    } catch {
+      verifyCertificateByFaculty(cert.id, faculty, status);
+      showToast(`Certificate ${cert.id} marked as ${status}`, status === 'Verified' ? 'success' : 'error');
+    }
     loadData();
   };
 

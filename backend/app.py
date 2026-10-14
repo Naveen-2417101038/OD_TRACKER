@@ -56,6 +56,15 @@ def create_app(config_class=Config):
     # Initialize Microsoft SQL Server Connection & Schema
     with app.app_context():
         init_db()
+        try:
+            from backend.scripts.sync_data_registry import sync_students_and_certificates
+            sync_students_and_certificates()
+        except Exception:
+            try:
+                from scripts.sync_data_registry import sync_students_and_certificates
+                sync_students_and_certificates()
+            except Exception as sync_err:
+                print(f"[!] Registry sync notice: {sync_err}")
 
     # Teardown scoped SQLAlchemy session after each request
     @app.teardown_appcontext

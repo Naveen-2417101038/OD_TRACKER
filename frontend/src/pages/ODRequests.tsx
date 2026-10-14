@@ -337,7 +337,11 @@ export const ODRequests: React.FC = () => {
                   <div className="mt-6 p-4 border border-rose-200 bg-rose-50 rounded-2xl flex items-start gap-3">
                     <XCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
                     <div>
-                      <h5 className="font-bold text-xs text-rose-800 uppercase tracking-wider">Rejection Feedback / Remarks</h5>
+                      <h5 className="font-bold text-xs text-rose-800 uppercase tracking-wider">
+                        {selectedRequest.certificateStatus === 'Deadline Expired' || (selectedRequest.rejectionReason || '').toLowerCase().includes('24 hours') || (selectedRequest.rejectionReason || '').toLowerCase().includes('deadline')
+                          ? 'OD Auto-Rejected: Missed 24-Hour Certificate Submission Deadline'
+                          : 'Rejection Feedback / Remarks'}
+                      </h5>
                       <p className="text-xs text-rose-700 font-medium mt-1 leading-normal">
                         {selectedRequest.rejectionReason || 
                          selectedRequest.remarks ||

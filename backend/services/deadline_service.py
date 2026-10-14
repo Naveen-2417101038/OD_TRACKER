@@ -9,6 +9,7 @@ import time
 import threading
 from datetime import datetime, timedelta
 
+from sqlalchemy import or_
 from backend.database.sql_server import session_scope
 from backend.models.db_models import ODRequest, Notification, SystemLock
 from backend.models.od_request import ODRequestModel
@@ -73,8 +74,19 @@ def run_deadline_checker(app, interval_seconds=30):
                 try:
                     with session_scope() as session:
                         req_query = session.query(ODRequest).filter(
-                            ODRequest.status.in_(["HOD Approved - Certificate Pending", "HOD Approved", "Approved"]),
-                            ODRequest.certificate_status.in_(["Not Uploaded", "Pending Upload", None])
+                            or_(
+                                ODRequest.status.in_(["HOD Approved - Certificate Pending", "HOD Approved"]),
+                                ODRequest.current_stage == "Certificate Pending"
+                            ),
+                            or_(
+                                ODRequest.certificate_status.in_(["Not Uploaded", "Pending Upload", "Deadline Expired", ""]),
+                                ODRequest.certificate_status.is_(None)
+                            ),
+                            or_(
+                                ODRequest.certificate_url.is_(None),
+                                ODRequest.certificate_url == ''
+                            ),
+                            ODRequest.certificate_submitted_at.is_(None)
                         )
                         for r in req_query.all():
                             docs.append(r.to_dict())

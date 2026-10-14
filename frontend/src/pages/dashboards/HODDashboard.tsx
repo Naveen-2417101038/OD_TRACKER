@@ -18,6 +18,7 @@ import {
   apiGetHODStats, 
   apiExportHODODExcel,
   apiGetAcademicStudents,
+  apiGetHODFaculty,
   AcademicStudentItem,
   HODExportFilters
 } from '../../services/api';
@@ -109,7 +110,7 @@ export const HODDashboard: React.FC = () => {
     // Try fetching live data from backend first
     try {
       const res = await apiGetHODODRequests(token);
-      if (res.success && res.all && res.all.length > 0) {
+      if (res.success && Array.isArray(res.all)) {
         setData({
           all: res.all,
           pending: res.pending || [],
@@ -127,7 +128,29 @@ export const HODDashboard: React.FC = () => {
             eventDistribution: statsRes.stats.eventDistribution || prev.eventDistribution
           }));
         }
-        setFacultyList(getFacultyList());
+
+        const facRes = await apiGetHODFaculty(token);
+        if (facRes.success && Array.isArray(facRes.faculty) && facRes.faculty.length > 0) {
+          setFacultyList(facRes.faculty.map((f: any) => ({
+            id: f.id,
+            faculty_id: f.id,
+            employee_id: f.identifier || f.id,
+            name: f.name,
+            email: f.email,
+            role: f.role,
+            department: f.department,
+            designation: f.designation || 'Assistant Professor',
+            assigned_section: f.assigned_section || f.assignedSection || 'All Sections',
+            assignedSection: f.assigned_section || f.assignedSection || 'All Sections',
+            assignedStudents: f.assignedStudents || 0,
+            status: 'Active',
+            created_at: f.created_at || '2026-01-01',
+            avatar: f.avatar,
+            phone: f.phone || '',
+          } as Faculty)));
+        } else {
+          setFacultyList(getFacultyList());
+        }
         return;
       }
     } catch (e) {

@@ -415,9 +415,20 @@ class UserModel:
             if record:
                 record.email_verified = True
                 record.account_status = 'ACTIVE'
+                record.verification_token_hash = None
                 record.updated_at = datetime.now()
                 return True
         return False
+
+    @staticmethod
+    def get_by_verification_token(token_hash: str) -> Optional[dict]:
+        """Query user by verification token SHA-256 hash."""
+        if not token_hash:
+            return None
+        with session_scope() as session:
+            user = session.query(User).filter(User.verification_token_hash == token_hash).first()
+            return UserModel._user_to_dict(user)
+
 
     @staticmethod
     def to_safe_dict(user: Optional[dict]) -> Optional[dict]:
@@ -432,11 +443,65 @@ class UserModel:
         return safe
 
     @staticmethod
-    def list_all() -> List[dict]:
-        """List all users with safe projections."""
+    def list_all(
+        role: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+        department: Optional[str] = None,
+        year: Optional[str] = None,
+        section: Optional[str] = None,
+        status: Optional[str] = None,
+        account_status: Optional[str] = None,
+        search: Optional[str] = None,
+        **kwargs
+    ) -> List[dict]:
+        """List all users with safe projections and optional filtering."""
         with session_scope() as session:
-            users = session.query(User).order_by(User.created_at.asc()).all()
+            query = session.query(User)
+
+            if role:
+                r_clean = role.strip().lower()
+                query = query.filter(
+                    or_(
+                        func.lower(User.role) == r_clean,
+                        func.lower(User.sub_role) == r_clean
+                    )
+                )
+            elif roles:
+                r_list = [r.strip().lower() for r in roles if r]
+                query = query.filter(
+                    or_(
+                        func.lower(User.role).in_(r_list),
+                        func.lower(User.sub_role).in_(r_list)
+                    )
+                )
+
+            if department and department.strip().lower() != 'all':
+                dept_clean = department.strip().lower()
+                if dept_clean in ('computer science and design', 'csd'):
+                    query = query.filter(func.lower(User.department).in_(['computer science and design', 'csd']))
+                else:
+                    query = query.filter(func.lower(User.department) == dept_clean)
+            if year:
+                query = query.filter(func.lower(User.year) == year.strip().lower())
+            if section:
+                query = query.filter(func.lower(User.section) == section.strip().lower())
+            if status:
+                query = query.filter(func.lower(User.status) == status.strip().lower())
+            if account_status:
+                query = query.filter(func.lower(User.account_status) == account_status.strip().lower())
+            if search:
+                s = f"%{search.strip().lower()}%"
+                query = query.filter(
+                    or_(
+                        func.lower(User.name).like(s),
+                        func.lower(User.identifier).like(s),
+                        func.lower(User.email).like(s),
+                    )
+                )
+
+            users = query.order_by(User.created_at.asc()).all()
             return [UserModel.to_safe_dict(u.to_dict()) for u in users]
+
 
     @staticmethod
     def update_user(user_id: Any, updates: dict) -> Optional[dict]:

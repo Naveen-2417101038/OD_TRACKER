@@ -239,7 +239,7 @@ def build_sql_server_url() -> str:
     # ── Authentication Strategy ───────────────────────────────────────────────
     if is_azure:
         # Azure SQL Database: Managed Identity, Microsoft Entra ID, or SQL Authentication
-        if auth_type in ("msi", "managed_identity") or (not user and not password and auth_type not in ("interactive", "mfa")):
+        if is_prod and auth_type not in ("interactive", "sql", "entra_password"):
             # Azure App Service System-Assigned or User-Assigned Managed Identity
             odbc_parts.append("Authentication=ActiveDirectoryMsi")
             client_id = (
@@ -248,7 +248,16 @@ def build_sql_server_url() -> str:
                 or getattr(Config, "SQL_CLIENT_ID", None)
             )
             if client_id:
-                # User-assigned managed identity requires client_id in UID
+                odbc_parts.append(f"UID={client_id.strip()}")
+
+        elif auth_type in ("msi", "managed_identity") or (not user and not password and auth_type not in ("interactive", "mfa")):
+            odbc_parts.append("Authentication=ActiveDirectoryMsi")
+            client_id = (
+                os.environ.get("AZURE_SQL_CLIENT_ID")
+                or os.environ.get("AZURE_CLIENT_ID")
+                or getattr(Config, "SQL_CLIENT_ID", None)
+            )
+            if client_id:
                 odbc_parts.append(f"UID={client_id.strip()}")
 
         elif auth_type in ("interactive", "activedirectoryinteractive", "mfa"):
@@ -395,10 +404,70 @@ class SQLServerDB:
             return cls._engine
 
         except Exception as e:
-            cls._is_connected = False
-            cls._connection_error = mask_credentials(str(e))
+            safe_err = mask_credentials(str(e))
             db_label = "Azure SQL Database" if cls._is_azure else "Microsoft SQL Server"
-            print(f"[-] {db_label} connection failed: {cls._connection_error}")
+            print(f"[-] {db_label} connection failed: {safe_err}")
+
+            # In local development: if Azure SQL fails (e.g. Entra ID MFA prevents password grant),
+            # safely attempt connection to the local development SQL Server instance (ODTRACKINGDB)
+            if not is_production_environment():
+                local_candidates = [
+                    os.environ.get("LOCAL_SQL_SERVER"),
+                    r"DESKTOP-OTLUI9C\MSSQLSERVER02",
+                    "localhost",
+                    "127.0.0.1",
+                    "."
+                ]
+                # Filter out None, empty, and remote Azure endpoints from local candidates
+                local_servers = [
+                    s for s in local_candidates 
+                    if s and ".database.windows.net" not in s.lower()
+                ]
+                local_db = (
+                    os.environ.get("LOCAL_SQL_DATABASE")
+                    or "ODTRACKINGDB"
+                )
+                driver = cls._driver_name or get_preferred_odbc_driver()
+                for srv in local_servers:
+                    try:
+                        local_odbc = (
+                            f"DRIVER={{{driver}}};"
+                            f"SERVER={srv};"
+                            f"DATABASE={local_db};"
+                            f"Trusted_Connection=yes;"
+                            f"Encrypt=no;"
+                            f"TrustServerCertificate=yes;"
+                            f"Connection Timeout=3;"
+                        )
+                        local_url = f"mssql+pyodbc:///?odbc_connect={urllib.parse.quote_plus(local_odbc)}"
+                        fallback_engine = create_engine(local_url, poolclass=QueuePool, pool_pre_ping=True)
+                        with fallback_engine.connect() as conn:
+                            row = conn.execute(text("SELECT DB_NAME() AS current_db")).fetchone()
+                            cls._database_name = row.current_db if row else local_db
+
+                        cls._engine = fallback_engine
+                        cls._session_factory = scoped_session(
+                            sessionmaker(
+                                bind=cls._engine,
+                                autocommit=False,
+                                autoflush=False,
+                                expire_on_commit=False,
+                            )
+                        )
+                        cls._is_connected = True
+                        cls._connection_error = None
+                        cls._is_azure = False
+                        cls._server_name = srv
+                        cls._auth_mode = "windows_authentication"
+                        print(
+                            f"[!] Local Development Fallback: Connected to Microsoft SQL Server '{cls._database_name}' on '{srv}'."
+                        )
+                        return cls._engine
+                    except Exception:
+                        continue
+
+            cls._is_connected = False
+            cls._connection_error = safe_err
             return None
 
     @classmethod

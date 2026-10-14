@@ -24,6 +24,7 @@ from backend.models.db_models import (
     ODHistory,
     Certificate,
     User,
+    Notification,
     parse_datetime,
     to_iso,
 )
@@ -128,7 +129,7 @@ class ODRequestModel:
     @staticmethod
     def expire_single_request(request_id: str) -> bool:
         """
-        Atomic auto-expiration of an overdue OD request when 24h deadline expires.
+        Atomic auto-expiration of an overdue OD request when 24h post-event certificate deadline expires.
         """
         req_id = str(request_id)
         now = datetime.now()
@@ -138,13 +139,15 @@ class ODRequestModel:
             if not record:
                 return False
 
-            if record.certificate_status in ('Verified', 'Pending Verification'):
+            # If certificate was already submitted or verified, do not expire
+            if record.certificate_status in ('Verified', 'Pending Verification') or (record.certificate_url and record.certificate_url.strip()):
                 return False
 
             record.status = 'Rejected'
             record.current_stage = 'Rejected'
             record.certificate_status = 'Deadline Expired'
-            record.rejection_reason = "Certificate submission deadline expired (exceeded 24 hours from event end time)."
+            record.rejection_reason = "Participation certificate not submitted within 24 hours of event date. OD request has been automatically rejected."
+            record.remarks = "Auto-rejected: 24-hour post-event certificate submission deadline exceeded."
             record.updated_at = now
 
             # Log auto-rejection in approvals
@@ -153,10 +156,10 @@ class ODRequestModel:
                     id=f"APPR_EXPIRE_{uuid.uuid4().hex[:6].upper()}",
                     request_id=req_id,
                     reviewer_id=None,
-                    reviewer_name="System Automated Daemon",
+                    reviewer_name="Automated Compliance Engine",
                     reviewer_role="System Daemon",
-                    action="Auto Rejected",
-                    comments="Auto-rejected: 24-hour post-event certificate submission deadline exceeded without document upload.",
+                    action="Rejected",
+                    comments="Auto-rejected: Participation certificate was not uploaded within 24 hours of the event end date.",
                     created_at=now,
                 )
             )
@@ -167,12 +170,12 @@ class ODRequestModel:
                     id=f"HIST_EXPIRE_{uuid.uuid4().hex[:6].upper()}",
                     request_id=req_id,
                     student_id=record.student_id,
-                    action="Auto Expired",
+                    action="Rejected",
                     performed_by_id="SYSTEM",
-                    performed_by_name="Deadline Enforcement Engine",
-                    role="System Daemon",
+                    performed_by_name="Automated Compliance System",
+                    role="System",
                     stage="Certificate Deadline",
-                    remarks="OD application automatically rejected as participation certificate was not uploaded within 24 hours of event conclusion.",
+                    remarks="OD application automatically rejected as participation certificate was not uploaded within 24 hours of event date.",
                     created_at=now,
                 )
             )
@@ -182,9 +185,9 @@ class ODRequestModel:
                 Notification(
                     id=f"NOTIF_EXPIRE_{uuid.uuid4().hex[:6].upper()}",
                     user_id=record.student_id,
-                    title="OD Application Expired (Certificate Deadline Passed)",
-                    message=f"Your OD application for '{record.event_name}' has been marked as Rejected because the mandatory participation certificate was not uploaded within the 24-hour deadline.",
-                    type="warning",
+                    title="OD Application Rejected (Certificate Deadline Expired)",
+                    message=f"Your OD application for '{record.event_name}' was automatically rejected because the participation certificate was not submitted within 24 hours of the event date.",
+                    type="error",
                     link="/student/requests",
                     is_read=0,
                     created_at=now,
@@ -204,33 +207,48 @@ class ODRequestModel:
 
     @staticmethod
     def check_and_expire_deadlines() -> int:
-        """Scan and expire all overdue requests."""
+        """Scan and automatically reject all HOD-approved requests where the student failed to submit certificate within 24 hours of event date."""
         now = datetime.now()
         expired_count = 0
 
-        with session_scope() as session:
-            candidates = (
-                session.query(ODRequest)
-                .filter(
-                    ODRequest.status.in_([
-                        'HOD Approved - Certificate Pending',
-                        'HOD Approved',
-                        'Approved',
-                    ]),
-                    ODRequest.certificate_status.in_(['Not Uploaded', 'Pending Upload']),
+        try:
+            with session_scope() as session:
+                candidates = (
+                    session.query(ODRequest)
+                    .filter(
+                        or_(
+                            ODRequest.status.in_([
+                                'HOD Approved - Certificate Pending',
+                                'HOD Approved',
+                                'Certificate Pending',
+                                'Approved',
+                            ]),
+                            ODRequest.current_stage == 'Certificate Pending'
+                        ),
+                        or_(
+                            ODRequest.certificate_url.is_(None),
+                            ODRequest.certificate_url == ''
+                        ),
+                        ODRequest.certificate_submitted_at.is_(None),
+                        or_(
+                            ODRequest.certificate_status.in_(['Not Uploaded', 'Pending Upload', 'Deadline Expired', '']),
+                            ODRequest.certificate_status.is_(None)
+                        )
+                    )
+                    .all()
                 )
-                .all()
-            )
-            candidate_ids = [c.id for c in candidates]
+                candidate_ids = [c.id for c in candidates]
 
-        for req_id in candidate_ids:
-            req = ODRequestModel.get_by_id(req_id)
-            if not req:
-                continue
-            end_dt, deadline_dt = ODRequestModel.get_event_end_and_deadline(req)
-            if deadline_dt and now > deadline_dt:
-                if ODRequestModel.expire_single_request(req_id):
-                    expired_count += 1
+            for req_id in candidate_ids:
+                req = ODRequestModel.get_by_id(req_id)
+                if not req:
+                    continue
+                end_dt, deadline_dt = ODRequestModel.get_event_end_and_deadline(req)
+                if deadline_dt and now > deadline_dt:
+                    if ODRequestModel.expire_single_request(req_id):
+                        expired_count += 1
+        except Exception as e:
+            print(f"[-] [check_and_expire_deadlines] Error during scan: {e}")
 
         return expired_count
 
@@ -519,6 +537,7 @@ class ODRequestModel:
 
     @staticmethod
     def list_all() -> List[dict]:
+        ODRequestModel.check_and_expire_deadlines()
         with session_scope() as session:
             records = session.query(ODRequest).order_by(ODRequest.created_at.desc()).all()
             result = []
@@ -529,11 +548,25 @@ class ODRequestModel:
 
     @staticmethod
     def list_by_student(student_id: Any) -> List[dict]:
+        ODRequestModel.check_and_expire_deadlines()
         clean_id = str(student_id).strip()
         with session_scope() as session:
+            user = session.query(User).filter(
+                or_(User.id == clean_id, func.lower(User.identifier) == clean_id.lower())
+            ).first()
+            uid = user.id if user else clean_id
+            uident = user.identifier if user else clean_id
+
             records = (
                 session.query(ODRequest)
-                .filter(ODRequest.student_id == clean_id)
+                .filter(
+                    or_(
+                        ODRequest.student_id == uid,
+                        ODRequest.student_id == uident,
+                        func.lower(ODRequest.student_reg_no) == uident.lower(),
+                        func.lower(ODRequest.student_reg_no) == uid.lower()
+                    )
+                )
                 .order_by(ODRequest.created_at.desc())
                 .all()
             )
@@ -545,6 +578,7 @@ class ODRequestModel:
 
     @staticmethod
     def list_for_mentor(mentor_user: dict) -> List[dict]:
+        ODRequestModel.check_and_expire_deadlines()
         dept = (mentor_user.get('department') or '').strip().lower()
         with session_scope() as session:
             query = session.query(ODRequest)
@@ -677,6 +711,7 @@ class ODRequestModel:
 
     @staticmethod
     def list_for_class_incharge(ci_user: dict) -> List[dict]:
+        ODRequestModel.check_and_expire_deadlines()
         dept = (ci_user.get('department') or '').strip().lower()
         with session_scope() as session:
             query = session.query(ODRequest)
@@ -809,6 +844,7 @@ class ODRequestModel:
 
     @staticmethod
     def list_for_hod(hod_user: dict) -> List[dict]:
+        ODRequestModel.check_and_expire_deadlines()
         dept = (hod_user.get('department') or '').strip().lower()
         with session_scope() as session:
             query = session.query(ODRequest)
@@ -956,6 +992,59 @@ class ODRequestModel:
             record = session.query(ODRequest).filter(ODRequest.id == req_id).first()
             if not record:
                 return None, "OD Request not found."
+
+            # Ensure student is authorized to upload for this request
+            rec_sid = str(record.student_id or '').lower()
+            rec_sreg = str(record.student_reg_no or '').lower()
+            user_sid = str(sid or '').lower()
+            user_sreg = str(student_user.get('identifier') or '').lower()
+            if user_sid not in (rec_sid, rec_sreg) and user_sreg not in (rec_sid, rec_sreg):
+                return None, "Access denied: You can only upload certificates for your own OD requests."
+
+            # Verify request status: Must be approved by HOD
+            if 'Rejected' in (record.status or '') or record.current_stage == 'Rejected':
+                return None, f"Cannot upload certificate: This OD request has been rejected ({record.rejection_reason or 'No certificate upload permitted'})."
+
+            if record.current_stage != 'Certificate Pending' and not (record.status or '').startswith('HOD Approved') and record.status != 'Certificate Submitted':
+                return None, f"Cannot upload certificate: OD request must be approved by HOD before submitting certificate (current status: '{record.status}')."
+
+            # Check 24-hour deadline from event completion date
+            end_dt, deadline_dt = ODRequestModel.get_event_end_and_deadline(record.to_dict())
+            if deadline_dt and now > deadline_dt:
+                # Immediately auto-reject due to deadline expired
+                record.status = 'Rejected'
+                record.current_stage = 'Rejected'
+                record.certificate_status = 'Deadline Expired'
+                record.rejection_reason = "Participation certificate was not submitted within 24 hours of event date. OD request has been automatically rejected."
+                record.remarks = "Auto-rejected: 24-hour post-event certificate submission deadline exceeded."
+                record.updated_at = now
+                session.add(
+                    Approval(
+                        id=f"APPR_EXPIRE_{uuid.uuid4().hex[:6].upper()}",
+                        request_id=req_id,
+                        reviewer_id=None,
+                        reviewer_name="Automated Compliance Engine",
+                        reviewer_role="System Daemon",
+                        action="Rejected",
+                        comments="Auto-rejected: Participation certificate was not uploaded within 24 hours of the event end date.",
+                        created_at=now,
+                    )
+                )
+                session.add(
+                    ODHistory(
+                        id=f"HIST_EXPIRE_{uuid.uuid4().hex[:6].upper()}",
+                        request_id=req_id,
+                        student_id=record.student_id,
+                        action="Rejected",
+                        performed_by_id="SYSTEM",
+                        performed_by_name="Automated Compliance System",
+                        role="System",
+                        stage="Certificate Deadline",
+                        remarks="OD application rejected as participation certificate was not uploaded within 24 hours of event date.",
+                        created_at=now,
+                    )
+                )
+                return None, "Certificate submission deadline has expired. This OD request has been rejected because the certificate was not uploaded within 24 hours of the event date."
 
             record.certificate_url = file_url
             record.certificate_status = 'Pending Verification'

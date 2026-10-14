@@ -204,15 +204,7 @@ def login():
         import secrets
         raw_verify_token = secrets.token_urlsafe(32)
         verify_token_hash = hashlib.sha256(raw_verify_token.encode('utf-8')).hexdigest()
-        col = users_collection()
-        if col is not None:
-            col.update_one(
-                {"id": user['id']},
-                {"$set": {
-                    "verification_token_hash": verify_token_hash,
-                    "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }}
-            )
+        UserModel.update_user(user['id'], {"verification_token_hash": verify_token_hash})
         print(f"\n[AUTH LOGIN] User '{user.get('email')}' attempted login while UNVERIFIED. Dispatching fresh verification email...", flush=True)
         try:
             sent = send_verification_email(user['email'], user.get('name') or 'Student', raw_verify_token)
@@ -568,20 +560,15 @@ def reset_password_with_otp():
     # Resolve target_user by token hash if not yet identified
     if not target_user and reset_token:
         try:
-            col = users_collection()
-            if col is not None:
+            target_user = UserModel.get_by_id(reset_token) or UserModel.get_by_email(reset_token)
+            if not target_user:
                 token_hash = hashlib.sha256(reset_token.encode('utf-8')).hexdigest()
-                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                u_doc = col.find_one({
-                    "$or": [
-                        {"reset_token_hash": token_hash, "reset_token_expires": {"$gte": now_str}},
-                        {"id": reset_token},
-                        {"email": reset_token.lower()}
-                    ]
-                })
-                if u_doc:
-                    target_user = UserModel._format_doc(u_doc)
-                    print(f"[AUTH RESET-PASSWORD] Resolved target user from reset token: {target_user.get('name')} <{target_user.get('email')}>", flush=True)
+                from backend.database.sql_server import session_scope
+                from backend.models.db_models import User
+                with session_scope() as sess:
+                    rec = sess.query(User).filter(User.reset_token_hash == token_hash).first()
+                    if rec:
+                        target_user = rec.to_dict()
         except Exception as e:
             print(f"[-] [AUTH RESET-PASSWORD] User resolution from token failed: {e}", flush=True)
 
@@ -629,21 +616,11 @@ def verify_email(token=None):
         return jsonify({'success': False, 'error': 'Verification token is required.'}), 400
 
     token_hash = hashlib.sha256(token.strip().encode('utf-8')).hexdigest()
-    col = users_collection()
-    if col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
-    user = col.find_one({"verification_token_hash": token_hash})
+    user = UserModel.get_by_verification_token(token_hash)
     if not user:
         return jsonify({'success': False, 'error': 'Invalid verification link or token already used.'}), 400
 
-    col.update_one(
-        {"id": user['id']},
-        {"$set": {
-            "email_verified": True,
-            "account_status": "ACTIVE",
-            "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }, "$unset": {"verification_token_hash": ""}}
-    )
+    UserModel.verify_email(user['id'])
 
     print(f"[+] [AUTH VERIFY-EMAIL] Email successfully verified for '{user.get('email')}' (User ID: {user.get('id')}).", flush=True)
     return jsonify({'success': True, 'message': 'Email verified successfully! You may now log in.'}), 200
@@ -666,15 +643,7 @@ def resend_verification():
     import secrets
     raw_verify_token = secrets.token_urlsafe(32)
     verify_token_hash = hashlib.sha256(raw_verify_token.encode('utf-8')).hexdigest()
-    col = users_collection()
-    if col is not None:
-        col.update_one(
-            {"id": user['id']},
-            {"$set": {
-                "verification_token_hash": verify_token_hash,
-                "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }}
-        )
+    UserModel.update_user(user['id'], {"verification_token_hash": verify_token_hash})
 
     print(f"\n[AUTH RESEND-VERIFICATION] Dispatching fresh verification email to {user['email']}...", flush=True)
     try:

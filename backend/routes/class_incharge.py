@@ -6,43 +6,36 @@ from datetime import datetime
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash
 from flask import Blueprint, request, jsonify, send_from_directory, send_file
-try:
-    from backend.models.od_request import ODRequestModel
-    from backend.models.user import UserModel
-    from backend.routes.auth import role_required, current_user
-    from backend.services.od_eligibility import calculate_od_eligibility
-    from backend.services.excel_ci_service import (
-        parse_tabular_file,
-        validate_and_preview_students,
-        import_students_confirmed,
-        validate_and_preview_attendance,
-        update_attendance_confirmed,
-        validate_and_preview_marks,
-        update_marks_confirmed,
-        generate_student_account_template,
-        generate_attendance_template,
-        generate_marks_template,
-        generate_failed_rows_report
-    )
-except ImportError:
-    from models.od_request import ODRequestModel
-    from models.user import UserModel
-    from routes.auth import role_required, current_user
-    from config import Config
-    from services.od_eligibility import calculate_od_eligibility
-    from services.excel_ci_service import (
-        parse_tabular_file,
-        validate_and_preview_students,
-        import_students_confirmed,
-        validate_and_preview_attendance,
-        update_attendance_confirmed,
-        validate_and_preview_marks,
-        update_marks_confirmed,
-        generate_student_account_template,
-        generate_attendance_template,
-        generate_marks_template,
-        generate_failed_rows_report
-    )
+from sqlalchemy import or_, and_, func
+from backend.database.sql_server import session_scope
+from backend.models.db_models import (
+    User,
+    StudentAcademicRecord,
+    ODRequest,
+    Certificate,
+    StudentImportHistory,
+    AttendanceUploadHistory,
+    MarksUploadHistory,
+    to_iso
+)
+from backend.models.academic_record import AcademicRecordModel
+from backend.models.od_request import ODRequestModel
+from backend.models.user import UserModel
+from backend.routes.auth import role_required, current_user
+from backend.services.od_eligibility import calculate_od_eligibility
+from backend.services.excel_ci_service import (
+    parse_tabular_file,
+    validate_and_preview_students,
+    import_students_confirmed,
+    validate_and_preview_attendance,
+    update_attendance_confirmed,
+    validate_and_preview_marks,
+    update_marks_confirmed,
+    generate_student_account_template,
+    generate_attendance_template,
+    generate_marks_template,
+    generate_failed_rows_report
+)
 
 class_incharge_bp = Blueprint('class_incharge', __name__)
 
@@ -298,101 +291,110 @@ def list_students():
     - Filter: Attendance thresholds, CGPA thresholds
     """
     ci_user = current_user
-    users_col = users_collection()
-    if users_col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
-
-    query = {'role': 'Student'}
-
-    # If not admin, scope by department if set
     ci_role = (ci_user.get('role') or '').lower()
-    if ci_role != 'admin':
-        ci_dept = (ci_user.get('department') or '').strip()
-        if ci_dept:
-            query['department'] = {'$regex': f"^{re.escape(ci_dept)}$", '$options': 'i'}
+    ci_dept = (ci_user.get('department') or '').strip()
 
-    # Filters
     search = request.args.get('search', '').strip()
     section = request.args.get('section', '').strip()
     year = request.args.get('year', '').strip()
     status = request.args.get('status', '').strip().upper()
     dept = request.args.get('department', '').strip()
 
-    if dept and ci_role == 'admin':
-        query['department'] = {'$regex': f"^{re.escape(dept)}$", '$options': 'i'}
-    if section:
-        query['section'] = {'$regex': f"^{re.escape(section)}$", '$options': 'i'}
-    if year:
-        query['year'] = {'$regex': f"^{re.escape(year)}$", '$options': 'i'}
-    if status in ['ACTIVE', 'DISABLED', 'UNVERIFIED']:
-        query['account_status'] = status
+    target_dept = dept if (ci_role == 'admin' and dept) else ci_dept
 
-    if search:
-        esc_search = re.escape(search)
-        query['$or'] = [
-            {'identifier': {'$regex': esc_search, '$options': 'i'}},
-            {'name': {'$regex': esc_search, '$options': 'i'}},
-            {'email': {'$regex': esc_search, '$options': 'i'}}
-        ]
+    with session_scope() as session:
+        query = session.query(User).filter(
+            or_(
+                func.lower(User.role) == 'student',
+                func.lower(User.sub_role) == 'student'
+            )
+        )
 
-    # Attendance and CGPA query bounds
-    try:
+        if target_dept:
+            t_clean = target_dept.strip().lower()
+            if t_clean in ('computer science and design', 'csd'):
+                query = query.filter(func.lower(User.department).in_(['computer science and design', 'csd']))
+            else:
+                query = query.filter(func.lower(User.department) == t_clean)
+        if section:
+            query = query.filter(func.lower(User.section) == section.lower())
+        if year:
+            query = query.filter(func.lower(User.year) == year.lower())
+        if status in ['ACTIVE', 'DISABLED', 'UNVERIFIED']:
+            query = query.filter(func.lower(User.account_status) == status.lower())
+        if search:
+            s = f"%{search.lower()}%"
+            query = query.filter(
+                or_(
+                    func.lower(User.identifier).like(s),
+                    func.lower(User.name).like(s),
+                    func.lower(User.email).like(s)
+                )
+            )
+
+        users = query.order_by(User.identifier.asc()).all()
+
         att_min = request.args.get('attendance_min')
         att_max = request.args.get('attendance_max')
-        if att_min is not None or att_max is not None:
-            att_q = {}
-            if att_min is not None and att_min != '':
-                att_q['$gte'] = float(att_min)
-            if att_max is not None and att_max != '':
-                att_q['$lte'] = float(att_max)
-            if att_q:
-                query['attendance_percentage'] = att_q
-    except ValueError:
-        pass
-
-    try:
         cgpa_min = request.args.get('cgpa_min')
         cgpa_max = request.args.get('cgpa_max')
-        if cgpa_min is not None or cgpa_max is not None:
-            cgpa_q = {}
+
+        student_list = []
+        for u in users:
+            d = u.to_safe_dict()
+            att_val = d.get('attendance_percentage', 0.0) or 0.0
+            cgpa_val = d.get('cgpa', 0.0) or 0.0
+
+            if att_min is not None and att_min != '':
+                try:
+                    if float(att_val) < float(att_min):
+                        continue
+                except ValueError:
+                    pass
+            if att_max is not None and att_max != '':
+                try:
+                    if float(att_val) > float(att_max):
+                        continue
+                except ValueError:
+                    pass
             if cgpa_min is not None and cgpa_min != '':
-                cgpa_q['$gte'] = float(cgpa_min)
+                try:
+                    if float(cgpa_val) < float(cgpa_min):
+                        continue
+                except ValueError:
+                    pass
             if cgpa_max is not None and cgpa_max != '':
-                cgpa_q['$lte'] = float(cgpa_max)
-            if cgpa_q:
-                query['cgpa'] = cgpa_q
-    except ValueError:
-        pass
+                try:
+                    if float(cgpa_val) > float(cgpa_max):
+                        continue
+                except ValueError:
+                    pass
 
-    students_cursor = users_col.find(query, {'password_hash': 0, 'password': 0}).sort('identifier', 1)
-    student_list = []
-    for s in students_cursor:
-        formatted = UserModel._format_doc(s)
-        student_list.append({
-            'id': formatted.get('id'),
-            'register_number': formatted.get('identifier') or formatted.get('id'),
-            'name': formatted.get('name'),
-            'email': formatted.get('email'),
-            'department': formatted.get('department'),
-            'section': formatted.get('section', 'A'),
-            'class': f"{formatted.get('department', '')} - {formatted.get('section', 'A')}",
-            'year': formatted.get('year', 'III Year'),
-            'phone': formatted.get('phone', ''),
-            'cgpa': formatted.get('cgpa') if formatted.get('cgpa') is not None else 0.0,
-            'attendance': formatted.get('attendance_percentage') if formatted.get('attendance_percentage') is not None else 0.0,
-            'cat1': formatted.get('cat1_marks'),
-            'cat2': formatted.get('cat2_marks'),
-            'cat3': formatted.get('cat3_marks'),
-            'status': formatted.get('account_status', 'ACTIVE'),
-            'avatar': formatted.get('avatar'),
-            'created_at': formatted.get('created_at')
-        })
+            student_list.append({
+                'id': d.get('id'),
+                'register_number': d.get('identifier') or d.get('id'),
+                'name': d.get('name'),
+                'email': d.get('email'),
+                'department': d.get('department'),
+                'section': d.get('section', 'A'),
+                'class': f"{d.get('department', '')} - {d.get('section', 'A')}",
+                'year': d.get('year', 'III Year'),
+                'phone': d.get('phone', ''),
+                'cgpa': cgpa_val,
+                'attendance': att_val,
+                'cat1': d.get('cat1_marks'),
+                'cat2': d.get('cat2_marks'),
+                'cat3': d.get('cat3_marks'),
+                'status': d.get('account_status', 'ACTIVE'),
+                'avatar': d.get('avatar'),
+                'created_at': d.get('created_at')
+            })
 
-    return jsonify({
-        'success': True,
-        'count': len(student_list),
-        'students': student_list
-    }), 200
+        return jsonify({
+            'success': True,
+            'count': len(student_list),
+            'students': student_list
+        }), 200
 
 
 # ─── 3. SINGLE STUDENT: CREATE, EDIT, STATUS, PASSWORD RESET & PROFILE ────────
@@ -432,21 +434,15 @@ def create_single_student():
     except ValueError:
         return jsonify({'success': False, 'error': 'Attendance must be a valid number between 0 and 100.'}), 400
 
-    users_col = users_collection()
-    if users_col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
+    existing_ident = UserModel.get_by_identifier(reg_no)
+    if existing_ident:
+        return jsonify({'success': False, 'error': f"Student with Register Number '{reg_no}' already exists in database."}), 409
 
-    # Duplicate check
-    existing = users_col.find_one({'$or': [{'identifier': reg_no}, {'email': email}, {'id': reg_no}]})
-    if existing:
-        if (existing.get('identifier') or '').upper() == reg_no:
-            return jsonify({'success': False, 'error': f"Student with Register Number '{reg_no}' already exists in database."}), 409
-        if (existing.get('email') or '').lower() == email:
-            return jsonify({'success': False, 'error': f"Student with Email '{email}' already exists in database."}), 409
-        return jsonify({'success': False, 'error': 'Student account already exists.'}), 409
+    existing_email = UserModel.get_by_email(email)
+    if existing_email:
+        return jsonify({'success': False, 'error': f"Student with Email '{email}' already exists in database."}), 409
 
     user_id = f"STUD_{uuid.uuid4().hex[:8].upper()}"
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     doc = {
         'id': user_id,
@@ -460,7 +456,7 @@ def create_single_student():
         'section': sec,
         'designation': 'Student',
         'phone': phone,
-        'password_hash': generate_password_hash(password),
+        'password': password,
         'avatar': f"https://api.dicebear.com/7.x/initials/svg?seed={name}&backgroundColor=0d9488",
         'email_verified': True,
         'account_status': 'ACTIVE',
@@ -469,35 +465,25 @@ def create_single_student():
         'cat1_marks': None,
         'cat2_marks': None,
         'cat3_marks': None,
-        'created_at': now_str,
-        'updated_at': now_str
     }
-    users_col.insert_one(doc)
+    created_user = UserModel.create_user(doc)
 
-    acad_col = academic_records_collection()
-    if acad_col is not None:
-        acad_col.update_one(
-            {'register_number': reg_no},
-            {'$set': {
-                'id': f"ACAD_{user_id}",
-                'student_id': user_id,
-                'register_number': reg_no,
-                'student_name': name,
-                'department': dept,
-                'attendance_percentage': att,
-                'total_working_days': 120,
-                'updated_by': ci_user.get('id', 'CLASS_INCHARGE'),
-                'updated_by_name': ci_user.get('name', 'Class Incharge'),
-                'created_at': now_str,
-                'updated_at': now_str
-            }},
-            upsert=True
-        )
+    AcademicRecordModel.create_or_update({
+        'student_id': user_id,
+        'register_number': reg_no,
+        'student_name': name,
+        'department': dept,
+        'attendance_percentage': att,
+        'cgpa': cgpa,
+        'total_working_days': 120,
+        'updated_by': ci_user.get('id', 'CLASS_INCHARGE'),
+        'updated_by_name': ci_user.get('name', 'Class Incharge'),
+    })
 
     return jsonify({
         'success': True,
         'message': f"Student account for '{name}' ({reg_no}) created successfully.",
-        'student': UserModel.to_safe_dict(doc)
+        'student': created_user
     }), 201
 
 
@@ -507,16 +493,12 @@ def update_student(student_id):
     """Edit student academic and demographic details."""
     ci_user = current_user
     data = request.get_json(silent=True) or {}
-    users_col = users_collection()
-    if users_col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
 
-    target = users_col.find_one({'$or': [{'id': student_id}, {'identifier': student_id}]})
+    target = UserModel.get_by_id(student_id) or UserModel.get_by_identifier(student_id)
     if not target:
         return jsonify({'success': False, 'error': f"Student with ID '{student_id}' not found."}), 404
 
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    updates = {'updated_at': now_str}
+    updates = {}
 
     # 1. Email Update & Uniqueness
     if 'email' in data and data['email'] is not None:
@@ -549,18 +531,18 @@ def update_student(student_id):
         if new_pwd:
             if len(new_pwd) < 6:
                 return jsonify({'success': False, 'error': 'Password must be at least 6 characters long.'}), 400
-            updates['password_hash'] = generate_password_hash(new_pwd)
+            updates['password'] = new_pwd
 
-    if 'name' in data and data['name'].strip():
-        updates['name'] = data['name'].strip()
+    if 'name' in data and str(data['name']).strip():
+        updates['name'] = str(data['name']).strip()
     if 'phone' in data:
         updates['phone'] = str(data['phone']).strip()
-    if 'department' in data and data['department'].strip():
-        updates['department'] = data['department'].strip()
-    if 'section' in data and data['section'].strip():
-        updates['section'] = data['section'].strip().upper()
-    if 'year' in data and data['year'].strip():
-        updates['year'] = data['year'].strip()
+    if 'department' in data and str(data['department']).strip():
+        updates['department'] = str(data['department']).strip()
+    if 'section' in data and str(data['section']).strip():
+        updates['section'] = str(data['section']).strip().upper()
+    if 'year' in data and str(data['year']).strip():
+        updates['year'] = str(data['year']).strip()
 
     if 'cgpa' in data and data['cgpa'] is not None and str(data['cgpa']).strip() != '':
         try:
@@ -572,7 +554,7 @@ def update_student(student_id):
         try:
             att_val = float(str(data['attendance']).replace('%', '').strip())
             updates['attendance_percentage'] = att_val
-            updates['last_academic_update'] = now_str
+            updates['last_academic_update'] = datetime.now()
         except ValueError:
             return jsonify({'success': False, 'error': 'Attendance must be numeric.'}), 400
 
@@ -583,33 +565,32 @@ def update_student(student_id):
     if 'cat3' in data:
         updates['cat3_marks'] = float(data['cat3']) if data['cat3'] is not None and str(data['cat3']).strip() != '' else None
 
-    users_col.update_one({'_id': target['_id']}, {'$set': updates})
+    updated_user = UserModel.update_user(target['id'], updates)
 
-    # Sync academic_records
-    acad_col = academic_records_collection()
-    if acad_col is not None:
-        acad_sync = {
-            'updated_by': ci_user.get('id'),
-            'updated_by_name': ci_user.get('name'),
-            'updated_at': now_str
-        }
-        if 'name' in updates:
-            acad_sync['student_name'] = updates['name']
-        if 'attendance_percentage' in updates:
-            acad_sync['attendance_percentage'] = updates['attendance_percentage']
-        if 'cat1_marks' in updates:
-            acad_sync['cat1_marks'] = updates['cat1_marks']
-        if 'cat2_marks' in updates:
-            acad_sync['cat2_marks'] = updates['cat2_marks']
-        if 'cat3_marks' in updates:
-            acad_sync['cat3_marks'] = updates['cat3_marks']
-        acad_col.update_one({'register_number': target.get('identifier')}, {'$set': acad_sync})
+    # Sync AcademicRecordModel
+    acad_sync = {
+        'updated_by': ci_user.get('id'),
+        'updated_by_name': ci_user.get('name')
+    }
+    if 'name' in updates:
+        acad_sync['student_name'] = updates['name']
+    if 'attendance_percentage' in updates:
+        acad_sync['attendance_percentage'] = updates['attendance_percentage']
+    if 'cgpa' in updates:
+        acad_sync['cgpa'] = updates['cgpa']
+    if 'cat1_marks' in updates:
+        acad_sync['cat1_marks'] = updates['cat1_marks']
+    if 'cat2_marks' in updates:
+        acad_sync['cat2_marks'] = updates['cat2_marks']
+    if 'cat3_marks' in updates:
+        acad_sync['cat3_marks'] = updates['cat3_marks']
 
-    updated_doc = users_col.find_one({'_id': target['_id']})
+    AcademicRecordModel.update_student_academics(target['id'], acad_sync)
+
     return jsonify({
         'success': True,
         'message': f"Student details for '{target.get('identifier')}' updated successfully.",
-        'student': UserModel.to_safe_dict(updated_doc)
+        'student': UserModel.to_safe_dict(updated_user)
     }), 200
 
 
@@ -622,19 +603,13 @@ def toggle_student_status(student_id):
     if new_status not in ['ACTIVE', 'DISABLED']:
         return jsonify({'success': False, 'error': "Invalid status. Must be 'ACTIVE' or 'DISABLED'."}), 400
 
-    users_col = users_collection()
-    if users_col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
-
-    target = users_col.find_one({'$or': [{'id': student_id}, {'identifier': student_id}]})
+    target = UserModel.get_by_id(student_id) or UserModel.get_by_identifier(student_id)
     if not target:
         return jsonify({'success': False, 'error': 'Student not found.'}), 404
 
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    users_col.update_one(
-        {'_id': target['_id']},
-        {'$set': {'account_status': new_status, 'updated_at': now_str}}
-    )
+    success = UserModel.set_account_status(target['id'], new_status)
+    if not success:
+        return jsonify({'success': False, 'error': 'Failed to update student status.'}), 500
 
     return jsonify({
         'success': True,
@@ -653,20 +628,13 @@ def reset_student_password(student_id):
     if len(new_password) < 6:
         return jsonify({'success': False, 'error': 'Password must be at least 6 characters long.'}), 400
 
-    users_col = users_collection()
-    if users_col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
-
-    target = users_col.find_one({'$or': [{'id': student_id}, {'identifier': student_id}]})
+    target = UserModel.get_by_id(student_id) or UserModel.get_by_identifier(student_id)
     if not target:
         return jsonify({'success': False, 'error': 'Student not found.'}), 404
 
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    pwd_hash = generate_password_hash(new_password)
-    users_col.update_one(
-        {'_id': target['_id']},
-        {'$set': {'password_hash': pwd_hash, 'password_changed_at': now_str, 'updated_at': now_str}}
-    )
+    success, msg = UserModel.change_password(target['id'], new_password)
+    if not success:
+        return jsonify({'success': False, 'error': msg}), 400
 
     return jsonify({
         'success': True,
@@ -683,41 +651,23 @@ def get_student_full_profile(student_id):
     - Academic marks & attendance
     - OD statistics (total, approved, rejected, pending)
     - OD requests history
-    - Sensitive password fields are never exposed.
     """
-    users_col = users_collection()
-    acad_col = academic_records_collection()
-    od_col = od_requests_collection()
-
-    if users_col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
-
-    user_doc = users_col.find_one({'$or': [{'id': student_id}, {'identifier': student_id}]})
+    user_doc = UserModel.get_by_id(student_id) or UserModel.get_by_identifier(student_id)
     if not user_doc:
         return jsonify({'success': False, 'error': 'Student not found.'}), 404
 
     sid = user_doc.get('id')
     reg_no = user_doc.get('identifier') or sid
 
-    # Academics
-    acad_doc = acad_col.find_one({'$or': [{'student_id': sid}, {'register_number': reg_no}]}) if acad_col is not None else None
+    acad_doc = AcademicRecordModel.get_by_student_id(sid) or AcademicRecordModel.get_by_register_number(reg_no)
     att = acad_doc.get('attendance_percentage') if acad_doc else user_doc.get('attendance_percentage', 0.0)
     c1 = acad_doc.get('cat1_marks') if acad_doc else user_doc.get('cat1_marks')
     c2 = acad_doc.get('cat2_marks') if acad_doc else user_doc.get('cat2_marks')
     c3 = acad_doc.get('cat3_marks') if acad_doc else user_doc.get('cat3_marks')
     cgpa = user_doc.get('cgpa', 0.0)
 
-    # OD Eligibility
     eligibility = calculate_od_eligibility(sid, requested_od_days=0.0)
-
-    # OD Requests history
-    od_requests = []
-    if od_col is not None:
-        cursor = od_col.find(
-            {'$or': [{'student_id': sid}, {'studentId': sid}, {'studentRegisterNo': reg_no}]},
-            {'_id': 0}
-        ).sort('created_at', -1)
-        od_requests = list(cursor)
+    od_requests = ODRequestModel.list_by_student(sid)
 
     total_od = len(od_requests)
     approved_od = len([r for r in od_requests if 'Approved' in str(r.get('status', ''))])
@@ -933,30 +883,81 @@ def confirm_marks_upload():
 @class_incharge_bp.route('/student-management/history/<history_type>', methods=['GET'])
 @role_required('Class Incharge', 'Admin')
 def get_ci_upload_history(history_type):
-    """Retrieve audit history logs for students, attendance, or marks uploads."""
+    """Retrieve audit history logs for students, attendance, or marks uploads from SQL Server."""
     h_type = (history_type or '').lower().strip()
     limit = int(request.args.get('limit', 50))
 
-    if h_type in ['students', 'student']:
-        col = student_imports_history_collection()
-    elif h_type in ['attendance', 'weekly_attendance']:
-        col = attendance_upload_history_collection()
-    elif h_type in ['marks', 'cat_marks']:
-        col = marks_upload_history_collection()
-    else:
-        return jsonify({'success': False, 'error': f"Unknown history type '{history_type}'."}), 400
+    with session_scope() as session:
+        if h_type in ['students', 'student']:
+            records = session.query(StudentImportHistory).order_by(StudentImportHistory.created_at.desc()).limit(limit).all()
+        elif h_type in ['attendance', 'weekly_attendance']:
+            records = session.query(AttendanceUploadHistory).order_by(AttendanceUploadHistory.created_at.desc()).limit(limit).all()
+        elif h_type in ['marks', 'cat_marks']:
+            records = session.query(MarksUploadHistory).order_by(MarksUploadHistory.created_at.desc()).limit(limit).all()
+        else:
+            return jsonify({'success': False, 'error': f"Unknown history type '{history_type}'."}), 400
 
-    if col is None:
-        return jsonify({'success': True, 'history': []}), 200
-
-    cursor = col.find({}, {'_id': 0}).sort('created_at', -1).limit(limit)
-    history_items = list(cursor)
+        history_items = [r.to_dict() for r in records]
 
     return jsonify({
         'success': True,
         'type': h_type,
         'count': len(history_items),
         'history': history_items
+    }), 200
+
+
+# ─── 7b. CLASS INCHARGE DASHBOARD STATS ───────────────────────────────────────
+
+@class_incharge_bp.route('/stats', methods=['GET'])
+@role_required('Class Incharge', 'Admin')
+def get_class_incharge_stats():
+    """Live statistics calculated directly from SQL Server records."""
+    ci_user = current_user
+    all_requests = ODRequestModel.list_for_class_incharge(ci_user)
+
+    pending_count = len([
+        r for r in all_requests
+        if r.get('status') == 'Mentor Approved' and r.get('currentStage') == 'Class Incharge'
+    ])
+    approved_count = len([r for r in all_requests if 'Approved' in str(r.get('status', ''))])
+    rejected_count = len([r for r in all_requests if 'Rejected' in str(r.get('status', ''))])
+
+    ci_dept = (ci_user.get('department') or '').strip()
+    ci_sec = (ci_user.get('section') or '').strip()
+    with session_scope() as session:
+        q = session.query(User).filter(
+            or_(
+                func.lower(User.role) == 'student',
+                func.lower(User.sub_role) == 'student'
+            )
+        )
+        if ci_dept and ci_dept != 'all':
+            if ci_dept.lower() in ('computer science and design', 'csd'):
+                q = q.filter(func.lower(User.department).in_(['computer science and design', 'csd']))
+            else:
+                q = q.filter(func.lower(User.department) == ci_dept.lower())
+        total_students = q.count()
+
+        # Check attendance alerts (< 75%)
+        low_att_count = session.query(User).filter(
+            or_(
+                func.lower(User.role) == 'student',
+                func.lower(User.sub_role) == 'student'
+            ),
+            User.attendance_percentage < 75.0
+        ).count()
+
+    return jsonify({
+        'success': True,
+        'stats': {
+            'totalStudents': total_students,
+            'pendingApprovals': pending_count,
+            'approvedCount': approved_count,
+            'rejectedCount': rejected_count,
+            'totalRequests': len(all_requests),
+            'attendanceAlerts': low_att_count
+        }
     }), 200
 
 
@@ -985,3 +986,84 @@ def export_failed_report():
         )
     except Exception as e:
         return jsonify({'success': False, 'error': f"Failed to generate report: {str(e)}"}), 500
+
+
+# ─── 9. CLASS INCHARGE CERTIFICATES & VERIFICATION ───────────────────────────
+
+@class_incharge_bp.route('/certificates', methods=['GET'])
+@role_required('Class Incharge', 'Admin')
+def get_class_incharge_certificates():
+    """Retrieve certificates awaiting or completed verification within Class Incharge's department/ward."""
+    ci_user = current_user
+    ci_dept = (ci_user.get('department') or '').strip().lower()
+
+    with session_scope() as session:
+        cert_query = session.query(Certificate).join(ODRequest, Certificate.request_id == ODRequest.id)
+        if ci_dept and ci_dept != 'all':
+            if ci_dept in ('computer science and design', 'csd'):
+                cert_query = cert_query.filter(func.lower(ODRequest.department).in_(['computer science and design', 'csd']))
+            else:
+                cert_query = cert_query.filter(func.lower(ODRequest.department) == ci_dept)
+        certs = cert_query.order_by(Certificate.created_at.desc()).all()
+        cert_list = [c.to_dict() for c in certs]
+
+        # Also include OD requests that have certificate_url but no entry in certificates table yet
+        od_reqs = session.query(ODRequest).filter(
+            ODRequest.certificate_url.isnot(None),
+            ODRequest.certificate_url != ''
+        )
+        if ci_dept and ci_dept != 'all':
+            if ci_dept in ('computer science and design', 'csd'):
+                od_reqs = od_reqs.filter(func.lower(ODRequest.department).in_(['computer science and design', 'csd']))
+            else:
+                od_reqs = od_reqs.filter(func.lower(ODRequest.department) == ci_dept)
+
+        existing_req_ids = {c.get('request_id') for c in cert_list}
+        for req in od_reqs.all():
+            if req.id not in existing_req_ids:
+                fname = os.path.basename(req.certificate_url or 'certificate.pdf')
+                cert_list.append({
+                    'id': f"CERT_{req.id}",
+                    'requestId': req.id,
+                    'request_id': req.id,
+                    'studentId': req.student_id,
+                    'student_id': req.student_id,
+                    'studentRegNo': req.student_reg_no,
+                    'student_reg_no': req.student_reg_no,
+                    'studentName': req.student_name,
+                    'student_name': req.student_name,
+                    'eventName': req.event_name,
+                    'event_name': req.event_name,
+                    'certificateName': fname,
+                    'certificate_file_url': req.certificate_url,
+                    'certificateUrl': req.certificate_url,
+                    'status': req.certificate_status or 'Pending Verification',
+                    'uploadDate': to_iso(req.certificate_submitted_at or req.updated_at),
+                    'upload_date': to_iso(req.certificate_submitted_at or req.updated_at),
+                })
+
+    return jsonify({'success': True, 'certificates': cert_list, 'count': len(cert_list)}), 200
+
+
+@class_incharge_bp.route('/od-requests/<request_id>/verify-certificate', methods=['POST'])
+@role_required('Class Incharge', 'Admin')
+def verify_student_certificate_ci(request_id):
+    """
+    Verify student participation certificate as Class Incharge.
+    Status can be 'Verified' or 'Rejected'.
+    """
+    ci_user = current_user
+    data = request.get_json(silent=True) or {}
+    status = (data.get('status') or 'Verified').strip()
+    remarks = (data.get('remarks') or '').strip()
+
+    updated_req, err = ODRequestModel.verify_certificate(request_id, ci_user, status, remarks)
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+
+    return jsonify({
+        'success': True,
+        'message': f"Certificate successfully {status.lower()} by {ci_user.get('name')}.",
+        'request': updated_req
+    }), 200
+
