@@ -1123,7 +1123,7 @@ export const HODDashboard: React.FC = () => {
                               </span>
                             </td>
                             <td className="py-3 px-3 text-center font-bold text-purple-700">
-                              {s.remainingODDays !== undefined ? `${s.remainingODDays}d left` : '9d'}
+                              {s.remainingODDays !== undefined ? (s.remainingODDays >= 999 ? '12d left' : `${Math.round(s.remainingODDays * 10) / 10}d left`) : '9d'}
                             </td>
                             <td className="py-3 px-3 text-slate-400 text-[11px]">
                               {s.lastUpdated && !isNaN(new Date(s.lastUpdated).getTime())

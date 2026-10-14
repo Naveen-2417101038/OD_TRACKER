@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
   ShieldCheck, Lock, Mail, Eye, EyeOff, AlertCircle, 
-  ArrowRight, Landmark, ArrowLeft, KeyRound, 
+  ArrowRight, Landmark, ArrowLeft, 
   CheckCircle2, ShieldAlert, Cpu
 } from 'lucide-react';
 import { useToast } from '../../components/Toast';
@@ -26,13 +26,6 @@ export const AdminLogin: React.FC = () => {
       navigate('/admin/dashboard', { replace: true });
     }
   }, [navigate]);
-
-  const handleFillDemoAdmin = () => {
-    setIdentifier('admin@rajalakshmi.edu.in');
-    setPassword('password123');
-    setError(null);
-    showToast('Demo Administrator credentials populated', 'info');
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -120,24 +113,6 @@ export const AdminLogin: React.FC = () => {
           
           {/* Subtle Top Accent Bar */}
           <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600" />
-
-          {/* Quick Demo Fill Bar */}
-          <div className="mb-6 p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <KeyRound className="w-4 h-4 text-amber-400 shrink-0" />
-              <div className="text-left">
-                <p className="text-[11px] font-bold text-slate-200">Demo Administrator Account</p>
-                <p className="text-[10px] text-slate-400">admin@rajalakshmi.edu.in</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleFillDemoAdmin}
-              className="text-[11px] font-bold px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition-all cursor-pointer whitespace-nowrap"
-            >
-              Autofill Credentials
-            </button>
-          </div>
 
           {/* Error Message */}
           {error && (

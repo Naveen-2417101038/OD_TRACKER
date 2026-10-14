@@ -13,7 +13,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 from backend.routes.auth import role_required, current_user
-from backend.models.user import UserModel, validate_college_email
+from backend.models.user import UserModel, validate_college_email, normalize_username
 from backend.models.od_request import ODRequestModel
 from backend.models.certificate import CertificateModel
 from backend.models.od_history import ODHistoryModel
@@ -243,6 +243,7 @@ def get_admin_students():
         query["$or"] = [
             {"name": {"$regex": esc, "$options": "i"}},
             {"identifier": {"$regex": esc, "$options": "i"}},
+            {"username": {"$regex": esc, "$options": "i"}},
             {"email": {"$regex": esc, "$options": "i"}}
         ]
 
@@ -326,6 +327,7 @@ def create_admin_student():
     user_payload = {
         'id': student_id,
         'identifier': identifier,
+        'username': normalize_username(data.get('username') or identifier),
         'name': name,
         'email': norm_email,
         'role': 'Student',
@@ -432,6 +434,17 @@ def update_admin_student(student_id):
                 }), 409
 
             updates['identifier'] = new_ident
+            updates['username'] = normalize_username(data.get('username') or new_ident)
+
+        if 'username' in data and data['username']:
+            norm_uname = normalize_username(data['username'])
+            existing_with_uname = UserModel.get_by_identifier(norm_uname)
+            if existing_with_uname and existing_with_uname.get('id') != user.get('id'):
+                return jsonify({
+                    'success': False,
+                    'error': f"The Username '{norm_uname}' is already taken by another user."
+                }), 409
+            updates['username'] = norm_uname
 
             # Synchronize historical related records across collections
             old_ident = user.get('identifier')
@@ -691,6 +704,7 @@ def get_admin_faculty():
         query["$or"] = [
             {"name": {"$regex": esc, "$options": "i"}},
             {"identifier": {"$regex": esc, "$options": "i"}},
+            {"username": {"$regex": esc, "$options": "i"}},
             {"email": {"$regex": esc, "$options": "i"}}
         ]
 
@@ -748,6 +762,7 @@ def create_admin_faculty():
     user_payload = {
         'id': fac_id,
         'identifier': identifier,
+        'username': normalize_username(data.get('username') or identifier),
         'name': name,
         'email': norm_email,
         'role': role,
@@ -815,6 +830,17 @@ def update_admin_faculty(faculty_id):
                     'error': f"The Employee ID '{new_ident}' is already taken by another user."
                 }), 409
             updates['identifier'] = new_ident
+            updates['username'] = normalize_username(data.get('username') or new_ident)
+
+        if 'username' in data and data['username']:
+            norm_uname = normalize_username(data['username'])
+            existing_with_uname = UserModel.get_by_identifier(norm_uname)
+            if existing_with_uname and existing_with_uname.get('id') != user.get('id'):
+                return jsonify({
+                    'success': False,
+                    'error': f"The Username '{norm_uname}' is already taken by another user."
+                }), 409
+            updates['username'] = norm_uname
 
     # 3. Password
     if 'password' in data and data['password'] is not None:

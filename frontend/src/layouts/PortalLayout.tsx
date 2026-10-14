@@ -137,11 +137,11 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
           
           {/* Institution & Portal Title */}
           <div className="flex items-center gap-3.5">
-            <Link to={getRoleLoginPath(role)} className="flex items-center gap-3 group" title="Return to Portal Homepage">
+            <Link to={getRoleLoginPath(role)} className="flex items-center gap-2.5 sm:gap-3 group" title="Return to Portal Homepage">
               <img 
                 src="/rec_logo.png" 
                 alt="Rajalakshmi Engineering College" 
-                className="h-9 sm:h-10 w-auto object-contain group-hover:scale-102 transition-transform drop-shadow-xs" 
+                className="h-8 sm:h-9 max-h-9 w-auto object-contain shrink-0 group-hover:opacity-90 transition-opacity drop-shadow-xs" 
               />
               <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${getRoleBadgeStyle(role)} shrink-0`}>
                 {role} Portal

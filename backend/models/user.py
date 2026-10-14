@@ -36,6 +36,16 @@ def validate_college_email(email):
     return True, norm
 
 
+def normalize_username(username):
+    """
+    Consistently normalize username by trimming leading/trailing whitespace
+    and converting to lowercase for case-insensitive authentication and storage.
+    """
+    if not username:
+        return ""
+    return str(username).strip().lower()
+
+
 class OtpResult(str):
     """Enables both tuple unpacking (raw_otp, user, err) and direct string usage (plain_otp)."""
     def __new__(cls, otp, updated_user=None, err=None):
@@ -56,6 +66,7 @@ class UserModel:
             try:
                 col.create_index("email")
                 col.create_index("identifier")
+                col.create_index("username")
             except Exception:
                 pass
 
@@ -98,9 +109,36 @@ class UserModel:
         return UserModel._format_doc(user)
 
     @staticmethod
+    def get_by_username(username, role=None):
+        """Query user by normalized username (case-insensitive)."""
+        norm = normalize_username(username)
+        if not norm:
+            return None
+        col = users_collection()
+        if col is None:
+            return None
+        escaped = re.escape(norm)
+        query = {"username": {"$regex": f"^{escaped}$", "$options": "i"}}
+        if role:
+            escaped_role = re.escape(role.strip())
+            query = {
+                "$and": [
+                    query,
+                    {
+                        "$or": [
+                            {"role": {"$regex": f"^{escaped_role}$", "$options": "i"}},
+                            {"sub_role": {"$regex": f"^{escaped_role}$", "$options": "i"}}
+                        ]
+                    }
+                ]
+            }
+        user = col.find_one(query)
+        return UserModel._format_doc(user)
+
+    @staticmethod
     def get_by_identifier(identifier, role=None):
         """
-        Query user by identifier (Register No / Employee ID), email, or ID (case-insensitive).
+        Query user by identifier (Register No / Employee ID), username, email, or ID (case-insensitive).
         Optional role validation.
         """
         col = users_collection()
@@ -117,6 +155,7 @@ class UserModel:
 
         or_clauses: list[dict] = [
             {"identifier": id_regex},
+            {"username": id_regex},
             {"email": id_regex},
             {"id": id_regex}
         ]
@@ -144,6 +183,28 @@ class UserModel:
             query = id_query
 
         user = col.find_one(query)
+
+        if not user:
+            # Fallback: check if clean_id matches first name or display name case-insensitively
+            name_query = {"name": {"$regex": f"^{escaped_id}(\\s.*)?$", "$options": "i"}}
+            if role:
+                escaped_role = re.escape(role.strip())
+                role_regex = {"$regex": f"^{escaped_role}$", "$options": "i"}
+                query_name = {
+                    "$and": [
+                        name_query,
+                        {
+                            "$or": [
+                                {"role": role_regex},
+                                {"sub_role": role_regex}
+                            ]
+                        }
+                    ]
+                }
+            else:
+                query_name = name_query
+            user = col.find_one(query_name)
+
         return UserModel._format_doc(user)
 
     @staticmethod
@@ -179,9 +240,13 @@ class UserModel:
         account_status = data.get('account_status', 'ACTIVE' if email_verified else 'UNVERIFIED')
         verification_token_hash = data.get('verification_token_hash')
 
+        raw_username = data.get('username') or data.get('identifier') or data.get('registerNumber') or data.get('register_number')
+        norm_username = normalize_username(raw_username)
+
         doc = {
             'id': user_id,
             'identifier': data.get('identifier') or data.get('registerNumber') or data.get('register_number'),
+            'username': norm_username,
             'name': data.get('name') or data.get('fullName') or data.get('full_name'),
             'email': (data.get('email') or '').strip().lower(),
             'role': data.get('role', 'Student'),
@@ -548,6 +613,11 @@ class UserModel:
                 clean_updates.pop('password', None)
             else:
                 clean_updates.pop('password', None)
+
+        if 'username' in clean_updates:
+            clean_updates['username'] = normalize_username(clean_updates['username'])
+        elif 'identifier' in clean_updates and not target.get('username'):
+            clean_updates['username'] = normalize_username(clean_updates['identifier'])
 
         clean_updates['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 

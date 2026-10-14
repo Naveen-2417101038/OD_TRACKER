@@ -12,7 +12,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-from backend.models.user import UserModel, validate_college_email
+from backend.models.user import UserModel, validate_college_email, normalize_username
 from backend.models.academic_record import AcademicRecordModel
 from backend.database.mongodb import users_collection, academic_records_collection
 
@@ -415,7 +415,7 @@ def parse_and_validate_student_file(file_stream: io.BytesIO, filename: str) -> D
                     seen_emails[clean_email] = row_idx
 
         # 4. Username Validation
-        clean_username = raw_username.upper()
+        clean_username = normalize_username(raw_username)
         if clean_username in seen_usernames:
             row_errors.append(f"Duplicate Username '{clean_username}' in file (first seen at row {seen_usernames[clean_username]}).")
         else:
@@ -624,7 +624,7 @@ def parse_and_validate_faculty_file(file_stream: io.BytesIO, filename: str) -> D
                     seen_emails[clean_email] = row_idx
 
         # 4. Username
-        clean_username = raw_username.upper()
+        clean_username = normalize_username(raw_username)
         if clean_username in seen_usernames:
             row_errors.append(f"Duplicate Username '{clean_username}' in file (first seen at row {seen_usernames[clean_username]}).")
         else:
@@ -781,7 +781,7 @@ def confirm_student_import(preview_token: str, admin_user: Any) -> Dict[str, Any
         user_payload = {
             'id': student_id,
             'identifier': roll,
-            'username': r.get('username') or roll,
+            'username': normalize_username(r.get('username') or roll),
             'name': name,
             'email': email,
             'role': 'Student',
@@ -871,7 +871,7 @@ def confirm_faculty_import(preview_token: str, admin_user: Any) -> Dict[str, Any
         user_payload = {
             'id': f"FAC_{fac_id.replace('-', '_')}",
             'identifier': fac_id,
-            'username': r.get('username') or fac_id,
+            'username': normalize_username(r.get('username') or fac_id),
             'name': name,
             'email': email,
             'role': role,

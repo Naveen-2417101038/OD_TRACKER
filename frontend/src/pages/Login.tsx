@@ -549,25 +549,16 @@ export const Login: React.FC = () => {
                       placeholder={activeRoleConfig.placeholder}
                       required
                       autoComplete="username"
-                      className={`w-full bg-slate-50 hover:bg-slate-100/50 focus:bg-white border border-slate-200 rounded-xl py-3 pl-10 pr-4 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-3 transition-all uppercase ${currentTheme.focusRing}`}
+                      className={`w-full bg-slate-50 hover:bg-slate-100/50 focus:bg-white border border-slate-200 rounded-xl py-3 pl-10 pr-4 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-3 transition-all ${currentTheme.focusRing}`}
                     />
                   </div>
                 </div>
 
                 {/* Password Input */}
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      Password
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setIsForgotModalOpen(true)}
-                      className="text-xs font-bold text-primary-600 hover:text-primary-700 hover:underline cursor-pointer"
-                    >
-                      Forgot password?
-                    </button>
-                  </div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Password
+                  </label>
                   <div className="relative">
                     <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
                       <Lock className="w-4 h-4" />

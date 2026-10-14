@@ -145,7 +145,7 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
         except (ValueError, TypeError):
             pass
     if cgpa is None:
-        cgpa = 8.6  # Default healthy CGPA for demonstration if unspecified
+        cgpa = 8.0  # Default standard CGPA if unspecified
 
     # 3. Calculate OD days already used (Pending, Mentor Approved, Class Incharge Approved, HOD Approved, Approved)
     od_used_days = 0.0
@@ -180,7 +180,7 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
 
     # 4. Centralized Institutional Academic Rules:
     # Rule A: Attendance Below 75% -> Ineligible for OD
-    # Rule B: CGPA Above 8.5 -> No 10% OD Limit
+    # Rule B: CGPA Above 8.5 -> No 10% OD Limit (Exempt from blocking)
     # Rule C: CGPA Below 8.5 -> Subject to 10% OD Limit
     has_high_cgpa = (cgpa >= cgpa_high_threshold)
     is_low_attendance = (overall_pct < attendance_min_threshold)
@@ -203,8 +203,8 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
     elif has_high_cgpa:
         eligible = True
         status_label = f"No Limit — CGPA Above {cgpa_high_threshold:.1f}"
-        max_od_allowed_days = 999.0
-        remaining_od_days = 999.0
+        # High CGPA students are exempt from the 10% limit restriction;
+        # retain the calculated 10% academic baseline rather than dummy 999.0
     else:
         # Standard student subject to 10% limit
         projected_used = od_used_days + requested_od_days
@@ -246,7 +246,9 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
         'eligibility_status_label': status_label,
         'status_label': status_label,
         'attendance_threshold': attendance_min_threshold,
-        'cgpa_threshold': cgpa_high_threshold
+        'cgpa_threshold': cgpa_high_threshold,
+        'has_high_cgpa': has_high_cgpa,
+        'is_exempt': has_high_cgpa
     }
 
 
