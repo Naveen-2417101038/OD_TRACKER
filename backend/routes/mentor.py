@@ -1,6 +1,6 @@
 import os
 from werkzeug.utils import secure_filename
-from flask import Blueprint, request, jsonify, send_from_directory, redirect
+from flask import Blueprint, request, jsonify, send_from_directory
 from sqlalchemy import or_, and_, func
 from backend.database.sql_server import session_scope
 from backend.models.db_models import User, Certificate, ODRequest, to_iso
@@ -225,9 +225,6 @@ def view_mentor_od_letter(request_id):
     doc_url = req.get('od_letter_url') or req.get('documentUrl')
     if not doc_url:
         return jsonify({'success': False, 'error': 'No OD letter attached to this request.'}), 404
-
-    if doc_url.startswith('http://') or doc_url.startswith('https://'):
-        return redirect(doc_url)
 
     filename = os.path.basename(doc_url)
     safe_filename = secure_filename(filename)

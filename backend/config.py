@@ -57,18 +57,10 @@ class Config:
     MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://127.0.0.1:27017/od_tracking')
     MONGO_DB_NAME = os.environ.get('MONGO_DB_NAME', 'od_tracking')
 
-    # ── Upload Directories (Local Filesystem Fallback) ────────────────────────
+    # ── Upload Directories ────────────────────────────────────────────────────
     UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', os.path.join(BASE_DIR, 'uploads'))
     OD_LETTERS_FOLDER = os.path.join(UPLOAD_FOLDER, 'od_letters')
     CERTIFICATES_FOLDER = os.path.join(UPLOAD_FOLDER, 'certificates')
-
-    # ── Azure Blob Storage Configuration ─────────────────────────────────────
-    AZURE_STORAGE_CONNECTION_STRING = os.environ.get('AZURE_STORAGE_CONNECTION_STRING', '')
-    AZURE_STORAGE_ACCOUNT_NAME = os.environ.get('AZURE_STORAGE_ACCOUNT_NAME', '')
-    AZURE_STORAGE_ACCOUNT_URL = os.environ.get('AZURE_STORAGE_ACCOUNT_URL', '')
-    AZURE_STORAGE_CONTAINER_CERTIFICATES = os.environ.get('AZURE_STORAGE_CONTAINER_CERTIFICATES', 'certificates')
-    AZURE_STORAGE_CONTAINER_OD_LETTERS = os.environ.get('AZURE_STORAGE_CONTAINER_OD_LETTERS', 'od-letters')
-    AZURE_STORAGE_USE_MANAGED_IDENTITY = os.environ.get('AZURE_STORAGE_USE_MANAGED_IDENTITY', 'false').lower() in ('true', '1', 'yes')
 
     # ── Allowed File Extensions ───────────────────────────────────────────────
     ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'webp'}

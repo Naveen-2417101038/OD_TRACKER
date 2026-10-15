@@ -9,13 +9,12 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 from werkzeug.utils import secure_filename
-from flask import Blueprint, request, jsonify, send_from_directory, send_file
+from flask import Blueprint, request, jsonify, send_from_directory
 try:
     from backend.models.od_request import ODRequestModel
     from backend.models.od_history import ODHistoryModel
     from backend.models.approval import ApprovalModel
     from backend.models.certificate import CertificateModel
-    from backend.services.blob_storage_service import BlobStorageService
     from backend.routes.auth import login_required, role_required, current_user
     from backend.config import Config
 except ImportError:
@@ -23,7 +22,6 @@ except ImportError:
     from models.od_history import ODHistoryModel
     from models.approval import ApprovalModel
     from models.certificate import CertificateModel
-    from services.blob_storage_service import BlobStorageService
     from routes.auth import login_required, role_required, current_user
     from config import Config
 
@@ -163,7 +161,11 @@ def create_od_request():
         orig_name = secure_filename(uploaded_file.filename) or 'document.pdf'
         ext = orig_name.rsplit('.', 1)[1] if '.' in orig_name else 'pdf'
         safe_filename = f"od_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
-        document_url = BlobStorageService.upload_od_letter(uploaded_file, safe_filename)
+        save_path = os.path.join(Config.OD_LETTERS_FOLDER, safe_filename)
+        
+        os.makedirs(Config.OD_LETTERS_FOLDER, exist_ok=True)
+        uploaded_file.save(save_path)
+        document_url = f"/api/od-requests/uploads/od_letters/{safe_filename}"
 
     # 5. Insert into MongoDB using Authenticated Student Profile
     req_payload = {
@@ -296,8 +298,11 @@ def upload_request_certificate(request_id):
     orig_name = secure_filename(uploaded_file.filename) or 'certificate.pdf'
     ext = orig_name.rsplit('.', 1)[1] if '.' in orig_name else 'pdf'
     safe_filename = f"cert_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
+    save_path = os.path.join(Config.CERTIFICATES_FOLDER, safe_filename)
 
-    cert_url = BlobStorageService.upload_certificate(uploaded_file, safe_filename)
+    os.makedirs(Config.CERTIFICATES_FOLDER, exist_ok=True)
+    uploaded_file.save(save_path)
+    cert_url = f"/api/od-requests/uploads/certificates/{safe_filename}"
 
     updated_req, err = ODRequestModel.upload_certificate(request_id, active_user, cert_url)
     if err:
@@ -334,32 +339,10 @@ def get_od_request_approvals(request_id):
 
 @od_requests_bp.route('/uploads/od_letters/<filename>', methods=['GET'])
 def serve_od_letter(filename):
-    """Safely serve uploaded OD letters from local disk or Azure Blob Storage."""
-    clean_name = secure_filename(filename)
-    local_path = os.path.join(Config.OD_LETTERS_FOLDER, clean_name)
-    if os.path.isfile(local_path):
-        return send_from_directory(Config.OD_LETTERS_FOLDER, clean_name)
-
-    # Check Azure Blob Storage stream
-    stream_info = BlobStorageService.get_blob_stream(clean_name, container_type='od_letters')
-    if stream_info:
-        stream, ctype = stream_info
-        return send_file(stream, mimetype=ctype, download_name=clean_name)
-
-    return jsonify({'success': False, 'error': 'Requested OD document not found.'}), 404
+    """Safely serve uploaded OD letters and participation documents."""
+    return send_from_directory(Config.OD_LETTERS_FOLDER, secure_filename(filename))
 
 @od_requests_bp.route('/uploads/certificates/<filename>', methods=['GET'])
 def serve_certificate(filename):
-    """Safely serve uploaded student participation certificates from local disk or Azure Blob Storage."""
-    clean_name = secure_filename(filename)
-    local_path = os.path.join(Config.CERTIFICATES_FOLDER, clean_name)
-    if os.path.isfile(local_path):
-        return send_from_directory(Config.CERTIFICATES_FOLDER, clean_name)
-
-    # Check Azure Blob Storage stream
-    stream_info = BlobStorageService.get_blob_stream(clean_name, container_type='certificates')
-    if stream_info:
-        stream, ctype = stream_info
-        return send_file(stream, mimetype=ctype, download_name=clean_name)
-
-    return jsonify({'success': False, 'error': 'Requested certificate file not found.'}), 404
+    """Safely serve uploaded student participation certificates."""
+    return send_from_directory(Config.CERTIFICATES_FOLDER, secure_filename(filename))
