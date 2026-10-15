@@ -69,6 +69,14 @@ class Config:
     OD_LETTERS_FOLDER = os.path.join(UPLOAD_FOLDER, 'od_letters')
     CERTIFICATES_FOLDER = os.path.join(UPLOAD_FOLDER, 'certificates')
 
+    # ── Azure Blob Storage Configuration ──────────────────────────────────────
+    AZURE_STORAGE_ACCOUNT_NAME = os.environ.get('AZURE_STORAGE_ACCOUNT_NAME', 'odtrackerstorage')
+    AZURE_STORAGE_CONNECTION_STRING = os.environ.get('AZURE_STORAGE_CONNECTION_STRING', '')
+    AZURE_STORAGE_KEY = os.environ.get('AZURE_STORAGE_KEY', '')
+    AZURE_BLOB_CONTAINER_OD_LETTERS = os.environ.get('AZURE_BLOB_CONTAINER_OD_LETTERS', 'odletters')
+    AZURE_BLOB_CONTAINER_CERTIFICATES = os.environ.get('AZURE_BLOB_CONTAINER_CERTIFICATES', 'certificates')
+    AZURE_BLOB_ENABLED = bool(os.environ.get('AZURE_STORAGE_CONNECTION_STRING') or os.environ.get('AZURE_STORAGE_ACCOUNT_NAME') or IS_AZURE)
+
     # ── Allowed File Extensions ───────────────────────────────────────────────
     ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'webp'}
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16 MB max upload

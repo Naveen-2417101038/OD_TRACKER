@@ -8,8 +8,9 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
+import io
 from werkzeug.utils import secure_filename
-from flask import Blueprint, request, jsonify, send_from_directory
+from flask import Blueprint, request, jsonify, send_from_directory, send_file
 try:
     from backend.models.od_request import ODRequestModel
     from backend.models.od_history import ODHistoryModel
@@ -174,6 +175,17 @@ def create_od_request():
         
         os.makedirs(Config.OD_LETTERS_FOLDER, exist_ok=True)
         uploaded_file.save(save_path)
+
+        # Upload to Azure Blob Storage container 'odletters'
+        try:
+            try:
+                from backend.services.blob_storage_service import blob_storage
+            except ImportError:
+                from services.blob_storage_service import blob_storage
+            blob_storage.upload_file('odletters', safe_filename, save_path)
+        except Exception as blob_err:
+            print(f"[!] Azure blob upload notice for OD letter {safe_filename}: {blob_err}")
+
         document_url = f"/api/od-requests/uploads/od_letters/{safe_filename}"
     elif doc_url:
         document_url = doc_url
@@ -313,6 +325,17 @@ def upload_request_certificate(request_id):
 
     os.makedirs(Config.CERTIFICATES_FOLDER, exist_ok=True)
     uploaded_file.save(save_path)
+
+    # Upload to Azure Blob Storage container 'certificates'
+    try:
+        try:
+            from backend.services.blob_storage_service import blob_storage
+        except ImportError:
+            from services.blob_storage_service import blob_storage
+        blob_storage.upload_file('certificates', safe_filename, save_path)
+    except Exception as blob_err:
+        print(f"[!] Azure blob upload notice for certificate {safe_filename}: {blob_err}")
+
     cert_url = f"/api/od-requests/uploads/certificates/{safe_filename}"
 
     updated_req, err = ODRequestModel.upload_certificate(request_id, active_user, cert_url)
@@ -352,6 +375,27 @@ def get_od_request_approvals(request_id):
 def serve_od_letter(filename):
     """Safely serve or download uploaded OD letters and participation documents."""
     safe_name = secure_filename(filename)
+    as_attachment = request.args.get('download', '').lower() in ['true', '1', 'yes']
+
+    # 1. Try Azure Blob Storage container 'odletters' first
+    try:
+        try:
+            from backend.services.blob_storage_service import blob_storage
+        except ImportError:
+            from services.blob_storage_service import blob_storage
+
+        blob_data, content_type = blob_storage.download_file('odletters', safe_name)
+        if blob_data:
+            return send_file(
+                io.BytesIO(blob_data),
+                mimetype=content_type or 'application/octet-stream',
+                as_attachment=as_attachment,
+                download_name=safe_name
+            )
+    except Exception as e:
+        print(f"[Azure Blob] Serve OD letter error for {safe_name}: {e}")
+
+    # 2. Local disk fallback
     file_path = os.path.join(Config.OD_LETTERS_FOLDER, safe_name)
     folder = Config.OD_LETTERS_FOLDER
 
@@ -361,16 +405,44 @@ def serve_od_letter(filename):
             folder = os.path.join(Config.BASE_DIR, 'uploads', 'od_letters')
             file_path = legacy_path
         else:
-            from services.pdf_service import generate_od_letter_pdf
+            try:
+                from backend.services.pdf_service import generate_od_letter_pdf
+            except ImportError:
+                from services.pdf_service import generate_od_letter_pdf
             generate_od_letter_pdf(file_path, req_id=safe_name.replace('.pdf', ''))
+            # Auto-sync generated PDF back to Azure Blob container
+            try:
+                blob_storage.upload_file('odletters', safe_name, file_path)
+            except Exception:
+                pass
     
-    as_attachment = request.args.get('download', '').lower() in ['true', '1', 'yes']
     return send_from_directory(folder, safe_name, as_attachment=as_attachment, download_name=safe_name)
 
 @od_requests_bp.route('/uploads/certificates/<filename>', methods=['GET'])
 def serve_certificate(filename):
     """Safely serve or download uploaded student participation certificates."""
     safe_name = secure_filename(filename)
+    as_attachment = request.args.get('download', '').lower() in ['true', '1', 'yes']
+
+    # 1. Try Azure Blob Storage container 'certificates' first
+    try:
+        try:
+            from backend.services.blob_storage_service import blob_storage
+        except ImportError:
+            from services.blob_storage_service import blob_storage
+
+        blob_data, content_type = blob_storage.download_file('certificates', safe_name)
+        if blob_data:
+            return send_file(
+                io.BytesIO(blob_data),
+                mimetype=content_type or 'application/octet-stream',
+                as_attachment=as_attachment,
+                download_name=safe_name
+            )
+    except Exception as e:
+        print(f"[Azure Blob] Serve certificate error for {safe_name}: {e}")
+
+    # 2. Local disk fallback
     file_path = os.path.join(Config.CERTIFICATES_FOLDER, safe_name)
     folder = Config.CERTIFICATES_FOLDER
 
@@ -380,8 +452,15 @@ def serve_certificate(filename):
             folder = os.path.join(Config.BASE_DIR, 'uploads', 'certificates')
             file_path = legacy_path
         else:
-            from services.pdf_service import generate_certificate_pdf
+            try:
+                from backend.services.pdf_service import generate_certificate_pdf
+            except ImportError:
+                from services.pdf_service import generate_certificate_pdf
             generate_certificate_pdf(file_path, cert_id=safe_name.replace('.pdf', ''))
+            # Auto-sync generated PDF back to Azure Blob container
+            try:
+                blob_storage.upload_file('certificates', safe_name, file_path)
+            except Exception:
+                pass
     
-    as_attachment = request.args.get('download', '').lower() in ['true', '1', 'yes']
     return send_from_directory(folder, safe_name, as_attachment=as_attachment, download_name=safe_name)

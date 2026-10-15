@@ -234,7 +234,28 @@ def view_class_incharge_od_letter(request_id):
     doc_url = req.get('od_letter_url') or req.get('documentUrl')
     filename = os.path.basename(doc_url) if doc_url else f"od_letter_{request_id}.pdf"
     safe_filename = secure_filename(filename)
+    as_attachment = request.args.get('download', '').lower() in ['true', '1', 'yes']
+    download_name = f"OD_Letter_{request_id}.pdf" if as_attachment else safe_filename
 
+    # 1. Try Azure Blob Storage container 'odletters' first
+    try:
+        try:
+            from backend.services.blob_storage_service import blob_storage
+        except ImportError:
+            from services.blob_storage_service import blob_storage
+
+        blob_data, content_type = blob_storage.download_file('odletters', safe_filename)
+        if blob_data:
+            return send_file(
+                io.BytesIO(blob_data),
+                mimetype=content_type or 'application/pdf',
+                as_attachment=as_attachment,
+                download_name=download_name
+            )
+    except Exception:
+        pass
+
+    # 2. Local disk fallback
     file_path = os.path.join(Config.OD_LETTERS_FOLDER, safe_filename)
     if not os.path.exists(file_path):
         from services.pdf_service import generate_od_letter_pdf
@@ -249,12 +270,11 @@ def view_class_incharge_od_letter(request_id):
             req_id=request_id
         )
 
-    as_attachment = request.args.get('download', '').lower() in ['true', '1', 'yes']
     return send_from_directory(
         Config.OD_LETTERS_FOLDER, 
         safe_filename, 
         as_attachment=as_attachment, 
-        download_name=f"OD_Letter_{request_id}.pdf" if as_attachment else safe_filename
+        download_name=download_name
     )
 
 
