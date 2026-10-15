@@ -75,6 +75,11 @@ export const ApplyOD: React.FC = () => {
     if (!formData.toTime) newErrors.toTime = 'To Time is required';
     if (!formData.reason.trim()) newErrors.reason = 'Reason for OD is required';
 
+    // Requirement: OD Letter / Supporting Document is strictly mandatory
+    if (!file) {
+      newErrors.file = 'OD Letter / Supporting document is mandatory. You cannot submit an OD request without uploading an event brochure, invitation letter, or registration proof.';
+    }
+
     // Requirement 1: 3-day advance submission rule & 1-year future boundary
     if (formData.fromDate) {
       const today = new Date();
@@ -142,6 +147,11 @@ export const ApplyOD: React.FC = () => {
           return;
         }
         setFile(droppedFile);
+        setErrors(prev => {
+          const updated = { ...prev };
+          delete updated.file;
+          return updated;
+        });
       } else {
         showToast("Please upload a PDF or Image file (PNG, JPG, WEBP) only", "error");
       }
@@ -156,11 +166,20 @@ export const ApplyOD: React.FC = () => {
         return;
       }
       setFile(selected);
+      setErrors(prev => {
+        const updated = { ...prev };
+        delete updated.file;
+        return updated;
+      });
     }
   };
 
   const removeFile = () => {
     setFile(null);
+    setErrors(prev => ({
+      ...prev,
+      file: 'OD Letter or Supporting Document is mandatory. You cannot submit an OD request without uploading an event brochure, invitation letter, or registration proof.'
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -168,7 +187,11 @@ export const ApplyOD: React.FC = () => {
     setServerError(null);
 
     if (!validate()) {
-      showToast('Please correct the validation errors in the form.', 'error');
+      if (!file) {
+        showToast('OD Letter is mandatory! Please upload a supporting document before submitting.', 'error');
+      } else {
+        showToast('Please correct the validation errors in the form.', 'error');
+      }
       return;
     }
 
@@ -535,11 +558,16 @@ export const ApplyOD: React.FC = () => {
           {/* Section 4: Document Upload */}
           <div className="space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <h3 className="font-bold text-xs uppercase tracking-wider text-slate-400">
-                4. OD Letter / Supporting Document
+              <h3 className="font-bold text-xs uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                4. OD Letter / Supporting Document <span className="text-rose-500 font-black">*</span>
               </h3>
-              <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full font-bold">
-                Supporting Proof
+              <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider flex items-center gap-1.5 ${
+                file 
+                  ? 'text-emerald-700 bg-emerald-50 border border-emerald-200' 
+                  : 'text-rose-700 bg-rose-50 border border-rose-200'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${file ? 'bg-emerald-500' : 'bg-rose-500 animate-pulse'}`}></span>
+                {file ? 'File Attached' : 'Mandatory Requirement'}
               </span>
             </div>
 
@@ -550,22 +578,31 @@ export const ApplyOD: React.FC = () => {
               onDragLeave={handleDrag}
               onDrop={handleDrop}
               className={`border-2 border-dashed rounded-2xl p-6 flex flex-col items-center justify-center transition-all ${
-                dragActive ? 'border-primary-500 bg-primary-50/30' : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'
+                errors.file 
+                  ? 'border-rose-400 bg-rose-50/20 shadow-sm shadow-rose-100' 
+                  : dragActive 
+                  ? 'border-primary-500 bg-primary-50/30' 
+                  : file 
+                  ? 'border-emerald-300 bg-emerald-50/20' 
+                  : 'border-slate-300 hover:border-slate-400 bg-slate-50/50'
               }`}
             >
               {file ? (
-                <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm w-full max-w-md">
-                  <div className="bg-primary-50 p-2.5 rounded-lg text-primary-600">
+                <div className="flex items-center gap-3 bg-white p-3.5 rounded-xl border border-emerald-200 shadow-sm w-full max-w-md">
+                  <div className="bg-emerald-50 p-2.5 rounded-lg text-emerald-600">
                     <FileText className="w-6 h-6" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-slate-800 truncate">{file.name}</p>
-                    <p className="text-[10px] text-slate-400 font-medium">{(file.size / 1024).toFixed(1)} KB</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs font-bold text-slate-800 truncate">{file.name}</p>
+                      <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded uppercase">Attached</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-medium mt-0.5">{(file.size / 1024).toFixed(1)} KB • Ready for upload</p>
                   </div>
                   <button
                     type="button"
                     onClick={removeFile}
-                    className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full"
+                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-full transition-colors"
                     title="Remove file"
                   >
                     <X className="w-4 h-4" />
@@ -573,12 +610,14 @@ export const ApplyOD: React.FC = () => {
                 </div>
               ) : (
                 <div className="text-center space-y-2">
-                  <div className="mx-auto w-12 h-12 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-400 shadow-sm">
+                  <div className={`mx-auto w-12 h-12 rounded-full border flex items-center justify-center shadow-sm ${
+                    errors.file ? 'bg-rose-50 border-rose-200 text-rose-500' : 'bg-white border-slate-200 text-slate-400'
+                  }`}>
                     <Upload className="w-5 h-5" />
                   </div>
                   <div className="text-xs text-slate-600 font-semibold">
                     <label className="text-primary-600 hover:text-primary-800 cursor-pointer font-bold underline">
-                      Click to upload
+                      Click to upload OD letter
                       <input
                         type="file"
                         className="hidden"
@@ -589,14 +628,28 @@ export const ApplyOD: React.FC = () => {
                     or drag & drop OD letter
                   </div>
                   <p className="text-[10px] text-slate-400">PDF, PNG, JPG, WEBP up to 16MB (Registration confirmation, official brochure, or permission letter)</p>
+                  <p className="text-[10px] font-bold text-rose-600 uppercase tracking-wider">
+                    * Without uploading this document, you cannot submit the OD request
+                  </p>
                 </div>
               )}
             </div>
+
+            {errors.file && (
+              <div className="flex items-center gap-2 text-rose-600 text-xs font-bold bg-rose-50 border border-rose-200 p-2.5 rounded-xl">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{errors.file}</span>
+              </div>
+            )}
             
-            <div className="flex items-start gap-2 bg-slate-50 border border-slate-200/50 p-3 rounded-xl text-[11px] text-slate-500 leading-normal">
-              <AlertCircle className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
+            <div className={`flex items-start gap-2 p-3 rounded-xl text-[11px] leading-normal transition-all ${
+              errors.file 
+                ? 'bg-rose-50 border border-rose-200 text-rose-800' 
+                : 'bg-amber-50 border border-amber-200 text-amber-800'
+            }`}>
+              <AlertCircle className={`w-4 h-4 flex-shrink-0 mt-0.5 ${errors.file ? 'text-rose-600' : 'text-amber-600'}`} />
               <span>
-                Note: Uploaded OD letters are stored securely and forwarded to your Mentor, Class Incharge, and HOD during the review process.
+                <strong>Mandatory Institutional Policy:</strong> Uploading the official event invitation, selection letter, or brochure is <strong>strictly required</strong>. Without uploading a file, you cannot submit the OD request.
               </span>
             </div>
           </div>

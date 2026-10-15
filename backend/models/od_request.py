@@ -459,6 +459,10 @@ class ODRequestModel:
         section = data.get('section') or data.get('studentSection') or 'A'
         event_name = str(data.get('event_name') or data.get('eventName'))
 
+        od_letter = data.get('od_letter_url') or data.get('documentUrl') or data.get('odLetterUrl')
+        if not od_letter or not str(od_letter).strip():
+            raise ValueError("OD Letter or Supporting Document is mandatory. You cannot submit an OD request without uploading an event brochure, invitation letter, or registration proof.")
+
         with session_scope() as session:
             record = ODRequest(
                 id=req_id,
@@ -482,7 +486,7 @@ class ODRequestModel:
                 number_of_days=num_days,
                 reason=data.get('reason'),
                 description=data.get('description'),
-                od_letter_url=data.get('od_letter_url') or data.get('documentUrl'),
+                od_letter_url=od_letter,
                 status='Pending',
                 current_stage='Mentor',
                 certificate_status='Not Uploaded',

@@ -149,23 +149,34 @@ def create_od_request():
             'error': "OD request duration cannot exceed 30 consecutive days."
         }), 400
 
-    # 4. Handle File Upload
+    # 4. Mandatory OD Letter / Supporting Document Validation & Handling
+    has_uploaded_file = bool(uploaded_file and getattr(uploaded_file, 'filename', None) and uploaded_file.filename.strip())
+    doc_url = (data.get('od_letter_url') or data.get('documentUrl') or data.get('odLetterUrl') or '').strip()
+
+    if not has_uploaded_file and not doc_url:
+        return jsonify({
+            'success': False,
+            'error': "OD Letter or Supporting Document is mandatory. You cannot submit an OD request without uploading an event brochure, invitation letter, or registration proof."
+        }), 400
+
     document_url = None
-    if uploaded_file and uploaded_file.filename:
+    if has_uploaded_file:
         if not is_allowed_file(uploaded_file.filename):
             return jsonify({
                 'success': False,
-                'error': f"Invalid file type. Allowed formats are: {', '.join(Config.ALLOWED_EXTENSIONS)}."
+                'error': f"Invalid file type for OD letter. Allowed formats are: {', '.join(Config.ALLOWED_EXTENSIONS)}."
             }), 400
 
         orig_name = secure_filename(uploaded_file.filename) or 'document.pdf'
-        ext = orig_name.rsplit('.', 1)[1] if '.' in orig_name else 'pdf'
+        ext = orig_name.rsplit('.', 1)[1].lower() if '.' in orig_name else 'pdf'
         safe_filename = f"od_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
         save_path = os.path.join(Config.OD_LETTERS_FOLDER, safe_filename)
         
         os.makedirs(Config.OD_LETTERS_FOLDER, exist_ok=True)
         uploaded_file.save(save_path)
         document_url = f"/api/od-requests/uploads/od_letters/{safe_filename}"
+    elif doc_url:
+        document_url = doc_url
 
     # 5. Insert into MongoDB using Authenticated Student Profile
     req_payload = {
