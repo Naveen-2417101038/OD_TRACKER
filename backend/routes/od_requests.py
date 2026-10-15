@@ -232,6 +232,17 @@ def get_my_od_requests():
         'count': len(requests_list)
     }), 200
 
+@od_requests_bp.route('/check-deadlines', methods=['POST'])
+@login_required
+def trigger_deadline_check():
+    """Trigger explicit 24-hour certificate submission deadline evaluation for all HOD-approved applications."""
+    expired_count = ODRequestModel.check_and_expire_deadlines()
+    return jsonify({
+        'success': True,
+        'message': f"Evaluated certificate deadlines. Auto-rejected {expired_count} overdue request(s).",
+        'expired_count': expired_count
+    }), 200
+
 @od_requests_bp.route('/<request_id>', methods=['GET'])
 @login_required
 def get_od_request_by_id(request_id):

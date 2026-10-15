@@ -213,5 +213,27 @@ class TestEmailPasswordWorkflow(unittest.TestCase):
             ok7 = EmailService.send_certificate_verified_student(sample_req, 'Certificate authentic')
             self.assertTrue(ok7)
 
+    def test_05_resend_email_dispatch(self):
+        """Test Resend email service dispatch with mocked API response."""
+        from backend.services.email_service import send_resend_email
+        from backend.config import Config
+        from unittest.mock import patch, MagicMock
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = b'{"id": "resend_msg_test_12345"}'
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch('urllib.request.urlopen', return_value=mock_resp):
+            with patch.object(Config, 'RESEND_API_KEY', 're_test_mock_key_12345'):
+                res = send_resend_email(
+                    to_email='student.test@rajalakshmi.edu.in',
+                    subject='Test Resend Subject',
+                    html_body='<p>Test Body</p>',
+                    text_body='Test Body'
+                )
+                self.assertTrue(res['success'])
+                self.assertEqual(res['message_id'], 'resend_msg_test_12345')
+
 if __name__ == '__main__':
     unittest.main()

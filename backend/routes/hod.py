@@ -4,6 +4,11 @@ import re
 from datetime import datetime
 from werkzeug.utils import secure_filename
 from flask import Blueprint, request, jsonify, send_from_directory, send_file, make_response
+from sqlalchemy import or_, and_, func
+from backend.database.sql_server import session_scope
+from backend.models.db_models import User, Certificate, ODRequest, StudentAcademicRecord, to_iso
+from backend.models.academic_record import AcademicRecordModel
+from backend.services.od_eligibility import calculate_od_eligibility
 from backend.models.od_request import ODRequestModel
 from backend.models.user import UserModel
 from backend.models.certificate import CertificateModel
@@ -690,7 +695,7 @@ def get_hod_department_stats():
     pending_hod = len([r for r in all_requests if r.get('status') == 'Class Incharge Approved'])
     pending_mentor = len([r for r in all_requests if r.get('status') == 'Pending'])
     pending_ci = len([r for r in all_requests if r.get('status') == 'Mentor Approved'])
-    approved = len([r for r in all_requests if r.get('status') in ['Approved', 'HOD Approved']])
+    approved = len([r for r in all_requests if r.get('status') in ['Approved', 'HOD Approved', 'HOD Approved - Certificate Pending', 'Certificate Submitted']])
     rejected = len([r for r in all_requests if 'Rejected' in str(r.get('status'))])
 
     # Event distribution
@@ -699,18 +704,33 @@ def get_hod_department_stats():
         ev_type = r.get('eventType') or r.get('event_type') or 'Other'
         event_dist[ev_type] = event_dist.get(ev_type, 0) + 1
 
+    dept_lower = (hod_user.get('department') or '').strip().lower()
+    with session_scope() as session:
+        att_query = session.query(func.avg(User.attendance_percentage)).filter(
+            or_(func.lower(User.role) == 'student', func.lower(User.sub_role) == 'student')
+        )
+        if dept_lower and dept_lower != 'all':
+            if dept_lower in ('computer science and design', 'csd'):
+                att_query = att_query.filter(func.lower(User.department).in_(['computer science and design', 'csd']))
+            else:
+                att_query = att_query.filter(func.lower(User.department) == dept_lower)
+        avg_att = att_query.scalar()
+        dept_avg_att = round(float(avg_att), 1) if avg_att is not None else 88.5
+
     return jsonify({
         'success': True,
         'stats': {
             'totalRequests': total,
+            'totalODRequests': total,
             'totalODsSanctioned': approved,
+            'pending': pending_hod,
             'pendingHOD': pending_hod,
             'pendingMentor': pending_mentor,
             'pendingClassIncharge': pending_ci,
             'approved': approved,
             'rejected': rejected,
             'approvalRate': round((approved / total * 100), 1) if total > 0 else 0,
-            'departmentAvgAttendance': 88.4,
+            'departmentAvgAttendance': dept_avg_att,
             'eventDistribution': event_dist
         }
     }), 200
@@ -743,3 +763,187 @@ def view_hod_od_letter(request_id):
         return jsonify({'success': False, 'error': 'Attached OD letter file not found on server.'}), 404
 
     return send_from_directory(Config.OD_LETTERS_FOLDER, safe_filename)
+
+
+# ─── HOD DEPARTMENT FACULTY MANAGEMENT ────────────────────────────────────────
+
+@hod_bp.route('/faculty', methods=['GET'])
+@role_required('HOD')
+def get_hod_department_faculty():
+    """Retrieve faculty members within the HOD's department oversight."""
+    hod_user = current_user
+    hod_dept = (hod_user.get('department') or '').strip().lower()
+
+    with session_scope() as session:
+        query = session.query(User).filter(
+            func.lower(User.role).in_(['mentor', 'class incharge', 'class_incharge', 'faculty', 'hod'])
+        )
+        if hod_dept and hod_dept != 'all':
+            query = query.filter(func.lower(User.department) == hod_dept)
+
+        faculty_records = query.order_by(User.name.asc()).all()
+        
+        # Count students in the department to report ward/assigned metrics
+        student_count = session.query(User).filter(
+            or_(func.lower(User.role) == 'student', func.lower(User.sub_role) == 'student'),
+            func.lower(User.department) == hod_dept if (hod_dept and hod_dept != 'all') else True
+        ).count()
+
+        faculty_list = []
+        for f in faculty_records:
+            d = f.to_safe_dict()
+            faculty_list.append({
+                'id': d.get('id'),
+                'faculty_id': d.get('id'),
+                'employee_id': d.get('identifier') or d.get('id'),
+                'name': d.get('name') or 'Faculty Member',
+                'email': d.get('email') or '',
+                'role': d.get('role') or 'Mentor',
+                'sub_role': d.get('sub_role') or d.get('role'),
+                'department': d.get('department'),
+                'designation': d.get('designation') or 'Assistant Professor',
+                'assigned_section': d.get('section') or 'All Sections',
+                'phone': d.get('phone') or '',
+                'assignedStudents': student_count if d.get('role') in ['Mentor', 'Class Incharge'] else 0,
+                'status': d.get('account_status', 'ACTIVE'),
+                'avatar': d.get('avatar'),
+                'created_at': d.get('created_at')
+            })
+
+    return jsonify({
+        'success': True,
+        'faculty': faculty_list,
+        'count': len(faculty_list)
+    }), 200
+
+
+# ─── HOD DEPARTMENT STUDENTS ──────────────────────────────────────────────────
+
+@hod_bp.route('/students', methods=['GET'])
+@role_required('HOD')
+def get_hod_department_students():
+    """Retrieve all students enrolled under HOD's department oversight."""
+    hod_user = current_user
+    hod_dept = (hod_user.get('department') or '').strip()
+
+    students = UserModel.list_all(role='Student', department=hod_dept if (hod_dept and hod_dept.lower() != 'all') else None)
+
+    acad_docs = {a['student_id']: a for a in AcademicRecordModel.list_all() if a and 'student_id' in a}
+
+    roster = []
+    for s in students:
+        sid = s.get('id')
+        reg_no = s.get('identifier') or sid
+        acad = acad_docs.get(sid) or AcademicRecordModel.get_by_register_number(reg_no)
+
+        elig = calculate_od_eligibility(sid, requested_od_days=0.0)
+
+        att = acad.get('attendance_percentage') if acad else s.get('attendance_percentage', 85.0)
+        cgpa = acad.get('cgpa') if acad and acad.get('cgpa') is not None else s.get('cgpa', 8.5)
+        c1 = acad.get('cat1_marks') if acad else s.get('cat1_marks')
+        c2 = acad.get('cat2_marks') if acad else s.get('cat2_marks')
+        c3 = acad.get('cat3_marks') if acad else s.get('cat3_marks')
+
+        roster.append({
+            'id': sid,
+            'studentId': sid,
+            'registerNumber': reg_no,
+            'rollNo': reg_no,
+            'name': s.get('name') or 'Student',
+            'studentName': s.get('name') or 'Student',
+            'email': s.get('email') or '',
+            'department': s.get('department'),
+            'year': s.get('year'),
+            'section': s.get('section', 'A'),
+            'phone': s.get('phone', ''),
+            'avatar': s.get('avatar'),
+            'attendancePercent': float(att) if att is not None else 85.0,
+            'cgpa': float(cgpa) if cgpa is not None else 8.5,
+            'cat1Marks': c1,
+            'cat2Marks': c2,
+            'cat3Marks': c3,
+            'odUsedDays': elig.get('od_used_days', 0.0),
+            'eligibilityStatus': elig.get('eligibility_status_label', 'Eligible')
+        })
+
+    return jsonify({
+        'success': True,
+        'students': roster,
+        'count': len(roster)
+    }), 200
+
+
+# ─── HOD CERTIFICATE SUBMISSIONS & AUDIT ───────────────────────────────────────
+
+@hod_bp.route('/certificates', methods=['GET'])
+@role_required('HOD')
+def get_hod_certificates():
+    """Retrieve certificates submitted by students within HOD's department."""
+    hod_user = current_user
+    hod_dept = (hod_user.get('department') or '').strip().lower()
+
+    with session_scope() as session:
+        cert_query = session.query(Certificate).join(ODRequest, Certificate.request_id == ODRequest.id)
+        if hod_dept and hod_dept != 'all':
+            cert_query = cert_query.filter(func.lower(ODRequest.department) == hod_dept)
+        certs = cert_query.order_by(Certificate.created_at.desc()).all()
+        cert_list = [c.to_dict() for c in certs]
+
+        # Also include OD requests that have certificate_url but no entry in certificates table yet
+        od_reqs = session.query(ODRequest).filter(
+            ODRequest.certificate_url.isnot(None),
+            ODRequest.certificate_url != ''
+        )
+        if hod_dept and hod_dept != 'all':
+            od_reqs = od_reqs.filter(func.lower(ODRequest.department) == hod_dept)
+
+        existing_req_ids = {c.get('request_id') for c in cert_list}
+        for req in od_reqs.all():
+            if req.id not in existing_req_ids:
+                fname = os.path.basename(req.certificate_url or 'certificate.pdf')
+                cert_list.append({
+                    'id': f"CERT_{req.id}",
+                    'requestId': req.id,
+                    'request_id': req.id,
+                    'studentId': req.student_id,
+                    'student_id': req.student_id,
+                    'studentRegNo': req.student_reg_no,
+                    'student_reg_no': req.student_reg_no,
+                    'studentName': req.student_name,
+                    'student_name': req.student_name,
+                    'eventName': req.event_name,
+                    'event_name': req.event_name,
+                    'certificateName': fname,
+                    'certificate_file_url': req.certificate_url,
+                    'certificateUrl': req.certificate_url,
+                    'status': req.certificate_status or 'Pending Verification',
+                    'uploadDate': to_iso(req.certificate_submitted_at or req.updated_at),
+                    'upload_date': to_iso(req.certificate_submitted_at or req.updated_at),
+                })
+
+    return jsonify({'success': True, 'certificates': cert_list, 'count': len(cert_list)}), 200
+
+
+@hod_bp.route('/od-requests/<request_id>/verify-certificate', methods=['POST'])
+@role_required('HOD')
+def verify_student_certificate_hod(request_id):
+    """
+    Verify student participation certificate as Head of Department (HOD).
+    Status can be 'Verified' or 'Rejected'.
+    """
+    hod_user = current_user
+    data = request.get_json(silent=True) or {}
+    status = (data.get('status') or 'Verified').strip()
+    remarks = (data.get('remarks') or '').strip()
+
+    updated_req, err = ODRequestModel.verify_certificate(request_id, hod_user, status, remarks)
+    if err:
+        return jsonify({'success': False, 'error': err}), 400
+
+    return jsonify({
+        'success': True,
+        'message': f"Certificate successfully {status.lower()} by HOD {hod_user.get('name')}.",
+        'request': updated_req
+    }), 200
+
+

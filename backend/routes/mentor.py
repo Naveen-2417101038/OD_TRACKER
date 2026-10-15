@@ -1,6 +1,13 @@
 import os
 from werkzeug.utils import secure_filename
 from flask import Blueprint, request, jsonify, send_from_directory
+from sqlalchemy import or_, and_, func
+from backend.database.sql_server import session_scope
+from backend.models.db_models import User, Certificate, ODRequest, to_iso
+from backend.models.user import UserModel
+from backend.models.academic_record import AcademicRecordModel
+from backend.services.od_eligibility import calculate_od_eligibility
+
 try:
     from backend.models.od_request import ODRequestModel
     from backend.routes.auth import role_required, current_user
@@ -227,3 +234,151 @@ def view_mentor_od_letter(request_id):
         return jsonify({'success': False, 'error': 'Attached OD letter file not found on server.'}), 404
 
     return send_from_directory(Config.OD_LETTERS_FOLDER, safe_filename)
+
+
+# ─── MENTOR CERTIFICATES VERIFICATION QUEUE ───────────────────────────────────
+
+@mentor_bp.route('/certificates', methods=['GET'])
+@role_required('Mentor')
+def get_mentor_certificates():
+    """Retrieve certificates awaiting or completed verification within mentor's ward/department."""
+    mentor_user = current_user
+    mentor_dept = (mentor_user.get('department') or '').strip().lower()
+
+    with session_scope() as session:
+        cert_query = session.query(Certificate).join(ODRequest, Certificate.request_id == ODRequest.id)
+        if mentor_dept:
+            cert_query = cert_query.filter(func.lower(ODRequest.department) == mentor_dept)
+        certs = cert_query.order_by(Certificate.created_at.desc()).all()
+        cert_list = [c.to_dict() for c in certs]
+
+        # Also include OD requests that have certificate_url but no entry in certificates table yet
+        od_reqs = session.query(ODRequest).filter(
+            ODRequest.certificate_url.isnot(None),
+            ODRequest.certificate_url != ''
+        )
+        if mentor_dept:
+            od_reqs = od_reqs.filter(func.lower(ODRequest.department) == mentor_dept)
+
+        existing_req_ids = {c.get('request_id') for c in cert_list}
+        for req in od_reqs.all():
+            if req.id not in existing_req_ids:
+                fname = os.path.basename(req.certificate_url or 'certificate.pdf')
+                cert_list.append({
+                    'id': f"CERT_{req.id}",
+                    'requestId': req.id,
+                    'request_id': req.id,
+                    'studentId': req.student_id,
+                    'student_id': req.student_id,
+                    'studentRegNo': req.student_reg_no,
+                    'student_reg_no': req.student_reg_no,
+                    'studentName': req.student_name,
+                    'student_name': req.student_name,
+                    'eventName': req.event_name,
+                    'event_name': req.event_name,
+                    'certificateName': fname,
+                    'certificate_file_url': req.certificate_url,
+                    'certificateUrl': req.certificate_url,
+                    'status': req.certificate_status or 'Pending Verification',
+                    'uploadDate': to_iso(req.certificate_submitted_at or req.updated_at),
+                    'upload_date': to_iso(req.certificate_submitted_at or req.updated_at),
+                })
+
+    return jsonify({'success': True, 'certificates': cert_list, 'count': len(cert_list)}), 200
+
+
+# ─── MENTOR LIVE DASHBOARD STATS ──────────────────────────────────────────────
+
+@mentor_bp.route('/stats', methods=['GET'])
+@role_required('Mentor')
+def get_mentor_stats():
+    """Live mentor dashboard statistics calculated from SQL Server."""
+    mentor_user = current_user
+    all_requests = ODRequestModel.list_for_mentor(mentor_user)
+
+    pending_count = len([r for r in all_requests if r.get('status') == 'Pending' and r.get('currentStage') == 'Mentor'])
+    approved_count = len([r for r in all_requests if 'Approved' in str(r.get('status', ''))])
+    rejected_count = len([r for r in all_requests if 'Rejected' in str(r.get('status', ''))])
+
+    mentor_dept = (mentor_user.get('department') or '').strip().lower()
+    with session_scope() as session:
+        q = session.query(User).filter(
+            or_(
+                func.lower(User.role) == 'student',
+                func.lower(User.sub_role) == 'student'
+            )
+        )
+        if mentor_dept and mentor_dept != 'all':
+            if mentor_dept in ('computer science and design', 'csd'):
+                q = q.filter(func.lower(User.department).in_(['computer science and design', 'csd']))
+            else:
+                q = q.filter(func.lower(User.department) == mentor_dept)
+        total_students = q.count()
+
+    return jsonify({
+        'success': True,
+        'stats': {
+            'totalStudents': total_students,
+            'pendingApprovals': pending_count,
+            'approvedCount': approved_count,
+            'rejectedCount': rejected_count,
+            'totalRequests': len(all_requests)
+        }
+    }), 200
+
+
+# ─── MENTOR ASSIGNED STUDENTS / WARDS ─────────────────────────────────────────
+
+@mentor_bp.route('/students', methods=['GET'])
+@role_required('Mentor')
+def get_mentor_students():
+    """Retrieve all students mapped to this mentor's department/ward with academic standing."""
+    mentor_user = current_user
+    mentor_dept = (mentor_user.get('department') or '').strip()
+
+    students = UserModel.list_all(role='Student', department=mentor_dept if mentor_dept else None)
+
+    acad_docs = {a['student_id']: a for a in AcademicRecordModel.list_all() if a and 'student_id' in a}
+
+    roster = []
+    for s in students:
+        sid = s.get('id')
+        reg_no = s.get('identifier') or sid
+        acad = acad_docs.get(sid) or AcademicRecordModel.get_by_register_number(reg_no)
+
+        elig = calculate_od_eligibility(sid, requested_od_days=0.0)
+
+        att = acad.get('attendance_percentage') if acad else s.get('attendance_percentage', 85.0)
+        cgpa = acad.get('cgpa') if acad and acad.get('cgpa') is not None else s.get('cgpa', 8.5)
+        c1 = acad.get('cat1_marks') if acad else s.get('cat1_marks')
+        c2 = acad.get('cat2_marks') if acad else s.get('cat2_marks')
+        c3 = acad.get('cat3_marks') if acad else s.get('cat3_marks')
+
+        roster.append({
+            'id': sid,
+            'studentId': sid,
+            'registerNumber': reg_no,
+            'rollNo': reg_no,
+            'name': s.get('name') or 'Student',
+            'studentName': s.get('name') or 'Student',
+            'email': s.get('email') or '',
+            'department': s.get('department'),
+            'year': s.get('year'),
+            'section': s.get('section', 'A'),
+            'phone': s.get('phone', ''),
+            'avatar': s.get('avatar'),
+            'attendancePercent': float(att) if att is not None else 85.0,
+            'cgpa': float(cgpa) if cgpa is not None else 8.5,
+            'cat1Marks': c1,
+            'cat2Marks': c2,
+            'cat3Marks': c3,
+            'odUsedDays': elig.get('od_used_days', 0.0),
+            'eligibilityStatus': elig.get('eligibility_status_label', 'Eligible')
+        })
+
+    return jsonify({
+        'success': True,
+        'students': roster,
+        'count': len(roster)
+    }), 200
+

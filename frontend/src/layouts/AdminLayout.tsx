@@ -108,23 +108,23 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
 
-              <Link to="/admin/dashboard" className="flex items-center gap-3 group min-w-0">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-600 via-orange-600 to-amber-500 flex items-center justify-center text-white shadow-md shadow-amber-500/20 group-hover:scale-105 transition-transform shrink-0">
+              <Link to="/admin/dashboard" className="flex items-center gap-2.5 group min-w-0">
+                <div className="bg-primary-600 p-2 rounded-xl text-white shadow-sm shadow-primary-600/30 group-hover:scale-105 transition-transform shrink-0">
                   <Landmark className="w-5 h-5" />
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-                    <span className="font-extrabold text-sm sm:text-base text-slate-900 tracking-tight whitespace-nowrap truncate">
-                      Rajalakshmi Engineering College
+                    <span className="font-black text-base text-slate-900 tracking-tight leading-none">
+                      OD-TRACKER
                     </span>
                     <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200 shrink-0 whitespace-nowrap">
                       <ShieldCheck className="w-3 h-3 text-amber-600" />
                       Admin Portal
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-500 font-medium hidden sm:block truncate">
-                    OD Tracking System • System-Level Operations & Governance
-                  </p>
+                  <span className="text-[10px] text-slate-400 font-bold tracking-wider uppercase block mt-0.5 truncate">
+                    Rajalakshmi Engineering College
+                  </span>
                 </div>
               </Link>
             </div>

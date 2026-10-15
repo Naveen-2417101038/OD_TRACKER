@@ -4,6 +4,7 @@ import sys
 import hmac
 import hashlib
 import time
+from datetime import datetime
 from functools import wraps
 
 # Ensure project root is in sys.path so 'backend.*' imports succeed in all environments
@@ -15,7 +16,6 @@ from flask import Blueprint, request, jsonify, session, current_app, g
 from werkzeug.local import LocalProxy
 try:
     from backend.models.user import UserModel, validate_college_email
-    from backend.database.mongodb import users_collection
     from backend.services.email_service import (
         send_otp_email,
         send_password_changed_notification,
@@ -24,7 +24,6 @@ try:
     )
 except ImportError:
     from models.user import UserModel, validate_college_email
-    from database.mongodb import users_collection
     from services.email_service import (
         send_otp_email,
         send_password_changed_notification,
@@ -202,9 +201,22 @@ def login():
 
     # Check if email is unverified
     if user.get('email_verified') is False or user.get('account_status') == 'UNVERIFIED':
+        import secrets
+        raw_verify_token = secrets.token_urlsafe(32)
+        verify_token_hash = hashlib.sha256(raw_verify_token.encode('utf-8')).hexdigest()
+        UserModel.update_user(user['id'], {"verification_token_hash": verify_token_hash})
+        print(f"\n[AUTH LOGIN] User '{user.get('email')}' attempted login while UNVERIFIED. Dispatching fresh verification email...", flush=True)
+        try:
+            sent = send_verification_email(user['email'], user.get('name') or 'Student', raw_verify_token)
+            print(f"[AUTH LOGIN] Verification email dispatch result: {sent}", flush=True)
+        except Exception as e:
+            print(f"[-] [AUTH LOGIN] Failed to dispatch verification email: {e}", flush=True)
+
         return jsonify({
             'success': False,
-            'error': 'Please verify your email before logging in. A verification link has been sent to your email.'
+            'unverified': True,
+            'email': user.get('email'),
+            'error': 'Please verify your college email before logging in. A fresh verification link has been sent to your email.'
         }), 401
 
     # If login initiated from a specific role portal, check role compatibility
@@ -334,6 +346,14 @@ def register():
 
     created_user = UserModel.create_user(user_data)
 
+    print(f"\n[AUTH REGISTER] Account created successfully for '{full_name}' <{norm_email}> (Role: {role}).", flush=True)
+    print(f"[AUTH REGISTER] Triggering account verification email with token...", flush=True)
+    try:
+        email_sent = send_verification_email(norm_email, full_name, raw_verify_token)
+        print(f"[AUTH REGISTER] send_verification_email returned: {email_sent}", flush=True)
+    except Exception as e:
+        print(f"[-] [AUTH REGISTER] Exception during verification email dispatch: {e}", flush=True)
+
     return jsonify({
         'success': True,
         'unverified': True,
@@ -378,10 +398,14 @@ def change_password():
 
     success, msg = UserModel.change_password(user['id'], new_password)
     if not success:
+        print(f"[-] [AUTH CHANGE-PASSWORD] Password update failed: {msg}", flush=True)
         return jsonify({'success': False, 'error': msg}), 400
+
+    print(f"[+] [AUTH CHANGE-PASSWORD] Password updated for {user.get('email')}.", flush=True)
 
     # Dispatch email confirmation
     if user.get('email'):
+        print(f"[AUTH CHANGE-PASSWORD] Dispatching password change security alert to {user['email']}...", flush=True)
         send_password_changed_notification(user['email'], user.get('name') or 'User')
 
     return jsonify({
@@ -401,30 +425,42 @@ def send_password_otp():
     req_email = (data.get('email') or '').strip().lower()
     auth_user = get_current_authenticated_user()
 
+    print(f"\n[AUTH OTP/SEND] Request received. auth_user={bool(auth_user)}, req_email='{req_email}'", flush=True)
+
     target_user = None
     email_to_send = None
 
-    if auth_user:
-        target_user = auth_user
-        email_to_send = auth_user.get('email')
-    elif req_email:
+    if req_email:
         target_user = UserModel.get_by_email(req_email) or UserModel.get_by_identifier(req_email)
         email_to_send = target_user.get('email') if target_user else req_email
+        if target_user:
+            print(f"[AUTH OTP/SEND] User located in database: {target_user.get('name')} (ID: {target_user.get('id')}, email: {target_user.get('email')})", flush=True)
+        else:
+            print(f"[!] [AUTH OTP/SEND] User with email/identifier '{req_email}' was NOT found in MongoDB users collection.", flush=True)
+    elif auth_user:
+        target_user = auth_user
+        email_to_send = auth_user.get('email')
+        print(f"[AUTH OTP/SEND] Target is authenticated session user: {auth_user.get('name')} <{email_to_send}>", flush=True)
     else:
+        print("[-] [AUTH OTP/SEND] No email or session provided.", flush=True)
         return jsonify({'success': False, 'error': 'Registered email address or authenticated session is required.'}), 400
 
     generic_msg = 'If an account exists with this email address, a password reset link has been sent to your inbox.'
 
     if not target_user or not email_to_send:
         # Mitigate account enumeration: return identical success message even if user not found
+        print(f"[!] [AUTH OTP/SEND] Returning anti-enumeration response (generic 200) since user was not found.", flush=True)
         return jsonify({'success': True, 'message': generic_msg}), 200
 
     raw_otp, updated_user, err = UserModel.create_email_otp(target_user, purpose="password update")
     if err:
+        print(f"[!] [AUTH OTP/SEND] OTP generation throttled / error: {err}", flush=True)
         return jsonify({'success': False, 'error': err}), 429
 
+    print(f"[AUTH OTP/SEND] Successfully generated OTP [{raw_otp}] for {email_to_send}. Calling send_otp_email...", flush=True)
     recipient_name = target_user.get('name') or 'User'
     sent = send_otp_email(email_to_send, recipient_name, raw_otp, purpose="password reset/change")
+    print(f"[AUTH OTP/SEND] send_otp_email result: {sent}", flush=True)
 
     # If live SMTP host is specified but transmission failed, report delivery failure
     if not sent and os.environ.get('SMTP_HOST'):
@@ -439,7 +475,7 @@ def send_password_otp():
 
     # Return identical generic message on public unauthenticated requests to prevent enumeration,
     # or specific message for authenticated in-app profile users
-    response_msg = f'A 6-digit verification code has been sent to {masked_email}. Code expires in 5 minutes.' if auth_user else generic_msg
+    response_msg = f'A 6-digit verification code has been sent to {masked_email}. Code expires in 5 minutes.' if (auth_user and not req_email) else generic_msg
 
     return jsonify({
         'success': True,
@@ -459,17 +495,22 @@ def verify_password_otp():
     req_email = (data.get('email') or '').strip().lower()
     auth_user = get_current_authenticated_user()
 
+    print(f"\n[AUTH OTP/VERIFY] Verifying OTP for email='{req_email}'", flush=True)
+
     if not otp:
         return jsonify({'success': False, 'error': '6-digit OTP code is required.'}), 400
 
-    target_user = auth_user or (UserModel.get_by_email(req_email) if req_email else None)
+    target_user = (UserModel.get_by_email(req_email) or UserModel.get_by_identifier(req_email)) if req_email else auth_user
     if not target_user:
+        print(f"[-] [AUTH OTP/VERIFY] Target user not found for session/email.", flush=True)
         return jsonify({'success': False, 'error': 'Invalid or expired verification session.'}), 400
 
     success, raw_reset_token, msg = UserModel.verify_email_otp(target_user, otp)
     if not success:
+        print(f"[-] [AUTH OTP/VERIFY] OTP verification failed: {msg}", flush=True)
         return jsonify({'success': False, 'error': msg}), 400
 
+    print(f"[+] [AUTH OTP/VERIFY] OTP verified successfully! Generated reset token.", flush=True)
     return jsonify({
         'success': True,
         'resetToken': raw_reset_token,
@@ -491,6 +532,8 @@ def reset_password_with_otp():
     req_email = (data.get('email') or '').strip().lower()
     auth_user = get_current_authenticated_user()
 
+    print(f"\n[AUTH RESET-PASSWORD] Request received. req_email='{req_email}', has_token={bool(reset_token)}, has_otp={bool(otp)}", flush=True)
+
     if not new_password or not confirm_password:
         return jsonify({'success': False, 'error': 'New password and confirm password are required.'}), 400
 
@@ -500,25 +543,48 @@ def reset_password_with_otp():
     if len(new_password) < 6:
         return jsonify({'success': False, 'error': 'New password must be at least 6 characters long.'}), 400
 
-    target_user = auth_user or (UserModel.get_by_email(req_email) if req_email else None)
+    target_user = (UserModel.get_by_email(req_email) or UserModel.get_by_identifier(req_email)) if req_email else auth_user
 
     # If direct OTP provided without separate verify step, verify OTP first
     if not reset_token and otp and target_user:
         ok, raw_token, err = UserModel.verify_email_otp(target_user, otp)
         if not ok:
+            print(f"[-] [AUTH RESET-PASSWORD] Direct OTP verification failed: {err}", flush=True)
             return jsonify({'success': False, 'error': err}), 400
         reset_token = raw_token
 
     if not reset_token:
+        print("[-] [AUTH RESET-PASSWORD] Missing reset token and valid OTP.", flush=True)
         return jsonify({'success': False, 'error': 'Reset verification token or valid OTP is required.'}), 400
+
+    # Resolve target_user by token hash if not yet identified
+    if not target_user and reset_token:
+        try:
+            target_user = UserModel.get_by_id(reset_token) or UserModel.get_by_email(reset_token)
+            if not target_user:
+                token_hash = hashlib.sha256(reset_token.encode('utf-8')).hexdigest()
+                from backend.database.sql_server import session_scope
+                from backend.models.db_models import User
+                with session_scope() as sess:
+                    rec = sess.query(User).filter(User.reset_token_hash == token_hash).first()
+                    if rec:
+                        target_user = rec.to_dict()
+        except Exception as e:
+            print(f"[-] [AUTH RESET-PASSWORD] User resolution from token failed: {e}", flush=True)
 
     success, msg = UserModel.reset_password(reset_token, new_password)
     if not success:
+        print(f"[-] [AUTH RESET-PASSWORD] UserModel.reset_password failed: {msg}", flush=True)
         return jsonify({'success': False, 'error': msg}), 400
+
+    print(f"[+] [AUTH RESET-PASSWORD] Password reset successfully.", flush=True)
 
     # Dispatch email confirmation
     if target_user and target_user.get('email'):
+        print(f"[AUTH RESET-PASSWORD] Dispatching security alert to {target_user['email']}...", flush=True)
         send_password_changed_notification(target_user['email'], target_user.get('name') or 'User')
+    else:
+        print("[!] [AUTH RESET-PASSWORD] No recipient email found; skipping password changed alert email.", flush=True)
 
     # Invalidate session for security
     session.clear()
@@ -542,31 +608,54 @@ def reset_password():
     return reset_password_with_otp()
 
 @auth_bp.route('/verify-email', methods=['POST', 'GET'])
-def verify_email():
+@auth_bp.route('/verify-email/<token>', methods=['GET'])
+def verify_email(token=None):
     """Verify email address using verification token."""
-    token = request.args.get('token') or ((request.get_json(silent=True) or {}).get('token'))
+    token = token or request.args.get('token') or ((request.get_json(silent=True) or {}).get('token'))
     if not token:
         return jsonify({'success': False, 'error': 'Verification token is required.'}), 400
 
     token_hash = hashlib.sha256(token.strip().encode('utf-8')).hexdigest()
-    col = users_collection()
-    if col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable.'}), 500
-    user = col.find_one({"verification_token_hash": token_hash})
+    user = UserModel.get_by_verification_token(token_hash)
     if not user:
         return jsonify({'success': False, 'error': 'Invalid verification link or token already used.'}), 400
 
-    from datetime import datetime
-    col.update_one(
-        {"_id": user['_id']},
-        {"$set": {
-            "email_verified": True,
-            "account_status": "ACTIVE",
-            "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }, "$unset": {"verification_token_hash": ""}}
-    )
+    UserModel.verify_email(user['id'])
 
+    print(f"[+] [AUTH VERIFY-EMAIL] Email successfully verified for '{user.get('email')}' (User ID: {user.get('id')}).", flush=True)
     return jsonify({'success': True, 'message': 'Email verified successfully! You may now log in.'}), 200
+
+@auth_bp.route('/resend-verification', methods=['POST'])
+def resend_verification():
+    """Explicitly resend account verification email link."""
+    data = request.get_json(silent=True) or {}
+    identifier = (data.get('email') or data.get('identifier') or '').strip().lower()
+    if not identifier:
+        return jsonify({'success': False, 'error': 'Institutional email or Register Number is required.'}), 400
+
+    user = UserModel.get_by_email(identifier) or UserModel.get_by_identifier(identifier)
+    if not user:
+        return jsonify({'success': True, 'message': 'If an unverified account exists with this email, a verification link has been dispatched.'}), 200
+
+    if user.get('email_verified') is True and user.get('account_status') == 'ACTIVE':
+        return jsonify({'success': False, 'error': 'This account email is already verified. You can log in directly.'}), 400
+
+    import secrets
+    raw_verify_token = secrets.token_urlsafe(32)
+    verify_token_hash = hashlib.sha256(raw_verify_token.encode('utf-8')).hexdigest()
+    UserModel.update_user(user['id'], {"verification_token_hash": verify_token_hash})
+
+    print(f"\n[AUTH RESEND-VERIFICATION] Dispatching fresh verification email to {user['email']}...", flush=True)
+    try:
+        sent = send_verification_email(user['email'], user.get('name') or 'Student', raw_verify_token)
+        print(f"[AUTH RESEND-VERIFICATION] Dispatch result: {sent}", flush=True)
+    except Exception as e:
+        print(f"[-] [AUTH RESEND-VERIFICATION] Failed: {e}", flush=True)
+
+    return jsonify({
+        'success': True,
+        'message': f"A fresh verification email has been sent to {user['email']}. Please check your inbox."
+    }), 200
 
 @auth_bp.route('/me', methods=['GET'])
 def get_current_user():

@@ -662,6 +662,117 @@ export async function apiRejectODRequestByMentor(
     };
   }
 }
+
+/**
+ * Retrieve certificates for mentor verification queue via GET /api/mentor/certificates
+ */
+export async function apiGetMentorCertificates(token?: string): Promise<{
+  success: boolean;
+  certificates: any[];
+  count?: number;
+  error?: string;
+}> {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
+    }
+    const res = await fetch(`${API_BASE}/mentor/certificates`, { method: 'GET', headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return { success: false, certificates: [], error: data.error || 'Failed to fetch certificates.' };
+    }
+    return { success: true, certificates: data.certificates || [], count: data.count || 0 };
+  } catch (err) {
+    console.warn('apiGetMentorCertificates network error:', err);
+    return { success: false, certificates: [], error: 'Unable to reach backend server.' };
+  }
+}
+
+/**
+ * Retrieve mentor live stats via GET /api/mentor/stats
+ */
+export async function apiGetMentorStats(token?: string): Promise<{
+  success: boolean;
+  stats?: {
+    totalStudents: number;
+    pendingApprovals: number;
+    approvedCount: number;
+    rejectedCount: number;
+    totalRequests: number;
+  };
+  error?: string;
+}> {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
+    }
+    const res = await fetch(`${API_BASE}/mentor/stats`, { method: 'GET', headers });
+    const data = await res.json().catch(() => ({}));
+    return data;
+  } catch (err) {
+    console.warn('apiGetMentorStats network error:', err);
+    return { success: false, error: 'Unable to reach backend server.' };
+  }
+}
+
+/**
+ * Retrieve mentor assigned students via GET /api/mentor/students
+ */
+export async function apiGetMentorStudents(token?: string): Promise<{
+  success: boolean;
+  students: any[];
+  count?: number;
+  error?: string;
+}> {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
+    }
+    const res = await fetch(`${API_BASE}/mentor/students`, { method: 'GET', headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return { success: false, students: [], error: data.error || 'Failed to fetch students.' };
+    }
+    return { success: true, students: data.students || [], count: data.count || 0 };
+  } catch (err) {
+    console.warn('apiGetMentorStudents network error:', err);
+    return { success: false, students: [], error: 'Unable to reach backend server.' };
+  }
+}
+
+/**
+ * Verify student certificate via POST /api/mentor/od-requests/<id>/verify-certificate
+ */
+export async function apiVerifyStudentCertificate(
+  requestId: string,
+  status: string = 'Verified',
+  remarks: string = '',
+  token?: string
+): Promise<{ success: boolean; message?: string; request?: any; error?: string }> {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
+    }
+    const res = await fetch(`${API_BASE}/mentor/od-requests/${requestId}/verify-certificate`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ status, remarks }),
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Failed to parse response' }));
+  } catch (err) {
+    console.warn('apiVerifyStudentCertificate network error:', err);
+    return { success: false, error: 'Unable to reach backend server.' };
+  }
+}
+
 /**
  * Retrieve all OD requests assigned to the logged-in Class Incharge via GET /api/class-incharge/od-requests
  */
@@ -1050,6 +1161,171 @@ export async function apiGetHODStats(
   } catch (err) {
     console.warn('apiGetHODStats network error:', err);
     return { success: false, error: 'Unable to reach backend server.' };
+  }
+}
+
+/**
+ * Retrieve faculty in HOD's department via GET /api/hod/faculty
+ */
+export async function apiGetHODFaculty(token?: string): Promise<{
+  success: boolean;
+  faculty: any[];
+  count?: number;
+  error?: string;
+}> {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
+    }
+    const res = await fetch(`${API_BASE}/hod/faculty`, { method: 'GET', headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return { success: false, faculty: [], error: data.error || 'Failed to fetch HOD faculty.' };
+    }
+    return { success: true, faculty: data.faculty || [], count: data.count || 0 };
+  } catch (err) {
+    console.warn('apiGetHODFaculty network error:', err);
+    return { success: false, faculty: [], error: 'Unable to reach backend server.' };
+  }
+}
+
+/**
+ * Retrieve students in HOD's department via GET /api/hod/students
+ */
+export async function apiGetHODStudents(token?: string): Promise<{
+  success: boolean;
+  students: any[];
+  count?: number;
+  error?: string;
+}> {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
+    }
+    const res = await fetch(`${API_BASE}/hod/students`, { method: 'GET', headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return { success: false, students: [], error: data.error || 'Failed to fetch HOD students.' };
+    }
+    return { success: true, students: data.students || [], count: data.count || 0 };
+  } catch (err) {
+    console.warn('apiGetHODStudents network error:', err);
+    return { success: false, students: [], error: 'Unable to reach backend server.' };
+  }
+}
+
+/**
+ * Retrieve certificates in HOD's department via GET /api/hod/certificates
+ */
+export async function apiGetHODCertificates(token?: string): Promise<{
+  success: boolean;
+  certificates: any[];
+  count?: number;
+  error?: string;
+}> {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
+    }
+    const res = await fetch(`${API_BASE}/hod/certificates`, { method: 'GET', headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return { success: false, certificates: [], error: data.error || 'Failed to fetch HOD certificates.' };
+    }
+    return { success: true, certificates: data.certificates || [], count: data.count || 0 };
+  } catch (err) {
+    console.warn('apiGetHODCertificates network error:', err);
+    return { success: false, certificates: [], error: 'Unable to reach backend server.' };
+  }
+}
+
+/**
+ * Retrieve Class Incharge dashboard stats via GET /api/class-incharge/stats
+ */
+export async function apiGetClassInchargeStats(token?: string): Promise<{
+  success: boolean;
+  stats?: {
+    totalStudents: number;
+    pendingApprovals: number;
+    approvedCount: number;
+    rejectedCount: number;
+    totalRequests: number;
+    attendanceAlerts?: number;
+  };
+  error?: string;
+}> {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
+    }
+    const res = await fetch(`${API_BASE}/class-incharge/stats`, { method: 'GET', headers });
+    const data = await res.json().catch(() => ({}));
+    return data;
+  } catch (err) {
+    console.warn('apiGetClassInchargeStats network error:', err);
+    return { success: false, error: 'Unable to reach backend server.' };
+  }
+}
+
+/**
+ * Retrieve certificates for Class Incharge verification queue via GET /api/class-incharge/certificates
+ */
+export async function apiGetClassInchargeCertificates(token?: string): Promise<{
+  success: boolean;
+  certificates: any[];
+  count?: number;
+  error?: string;
+}> {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
+    }
+    const res = await fetch(`${API_BASE}/class-incharge/certificates`, { method: 'GET', headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, certificates: [], error: data.error || 'Failed to fetch certificates.' };
+    }
+    return { success: true, certificates: data.certificates || [], count: data.count || 0 };
+  } catch (err) {
+    console.warn('apiGetClassInchargeCertificates network error:', err);
+    return { success: false, certificates: [], error: 'Unable to reach backend server.' };
+  }
+}
+
+/**
+ * Verify student certificate via POST /api/class-incharge/od-requests/<id>/verify-certificate
+ */
+export async function apiVerifyClassInchargeCertificate(
+  requestId: string,
+  status: 'Verified' | 'Rejected',
+  remarks?: string,
+  token?: string
+): Promise<{ success: boolean; message?: string; request?: any; error?: string }> {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
+    }
+    const res = await fetch(`${API_BASE}/class-incharge/od-requests/${encodeURIComponent(requestId)}/verify-certificate`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ status, remarks: remarks || '' }),
+    });
+    return await res.json().catch(() => ({ success: false, error: 'Malformed server response' }));
+  } catch (err: any) {
+    console.warn('apiVerifyClassInchargeCertificate network error:', err);
+    return { success: false, error: err.message || 'Network error verifying certificate.' };
   }
 }
 
@@ -2025,7 +2301,7 @@ export async function apiCIListStudents(params?: Record<string, any>, token?: st
     const activeToken = resolveStoredToken(token);
     if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
 
-    const url = new URL(`${API_BASE}/class-incharge/student-management/students`);
+    const url = new URL(`${API_BASE}/class-incharge/student-management/students`, window.location.origin);
     if (params) {
       Object.entries(params).forEach(([k, v]) => {
         if (v !== undefined && v !== null && v !== '') {

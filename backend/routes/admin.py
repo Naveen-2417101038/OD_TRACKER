@@ -20,14 +20,6 @@ from backend.models.od_history import ODHistoryModel
 from backend.models.academic_record import AcademicRecordModel, AcademicUploadHistoryModel
 from backend.services.od_eligibility import calculate_od_eligibility
 from backend.services.excel_academic_service import parse_and_validate_academic_excel
-from backend.database.mongodb import (
-    users_collection,
-    od_requests_collection,
-    certificates_collection,
-    od_history_collection,
-    system_settings_collection,
-    academic_records_collection
-)
 from backend.services.bulk_upload_service import (
     generate_student_template_excel,
     generate_student_template_csv,
@@ -40,6 +32,8 @@ from backend.services.bulk_upload_service import (
     generate_error_report
 )
 from backend.config import Config
+from backend.database.sql_server import session_scope
+from backend.models.db_models import SystemSetting
 
 admin_bp = Blueprint('admin', __name__)
 
@@ -116,11 +110,7 @@ def get_admin_dashboard_stats():
     Compute real system-wide KPIs and visual analytics for the Admin Dashboard.
     All metrics are computed live from active database records.
     """
-    col_users = users_collection()
-    col_ods = od_requests_collection()
-    col_certs = certificates_collection()
-
-    all_users = list(col_users.find({}, {"password_hash": 0, "password": 0})) if col_users is not None else []
+    all_users = UserModel.get_all()
     all_ods = [r for r in ODRequestModel.list_all() if isinstance(r, dict)]
 
     # User counts by role
@@ -212,42 +202,47 @@ def get_admin_dashboard_stats():
     }), 200
 
 
+# ─── 1B. User Management ──────────────────────────────────────────────────────────
+@admin_bp.route('/users', methods=['GET'])
+@role_required('Admin')
+def get_admin_users():
+    """Retrieve all users across all roles."""
+    users = UserModel.get_all()
+    return jsonify({
+        'success': True,
+        'users': users,
+        'data': users,
+        'total': len(users)
+    }), 200
+
+
 # ─── 2. Student Management ───────────────────────────────────────────────────────
 @admin_bp.route('/students', methods=['GET'])
 @role_required('Admin')
 def get_admin_students():
     """Retrieve all students with filters (search, department, year, section, status)."""
-    col = users_collection()
-    if col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable'}), 500
-
-    query: dict[str, Any] = {"role": {"$regex": "^student$", "$options": "i"}}
-
-    search = (request.args.get('search') or '').strip()
+    search = (request.args.get('search') or '').strip().lower()
     dept = (request.args.get('department') or '').strip()
     year = (request.args.get('year') or '').strip()
     section = (request.args.get('section') or '').strip()
     status = (request.args.get('status') or '').strip()
 
-    if dept and dept.lower() != 'all':
-        query["department"] = {"$regex": f"^{re.escape(dept)}$", "$options": "i"}
-    if year and year.lower() != 'all':
-        query["year"] = {"$regex": f"^{re.escape(year)}$", "$options": "i"}
-    if section and section.lower() != 'all':
-        query["section"] = {"$regex": f"^{re.escape(section)}$", "$options": "i"}
-    if status and status.lower() != 'all':
-        query["account_status"] = {"$regex": f"^{re.escape(status)}$", "$options": "i"}
-
-    if search:
-        esc = re.escape(search)
-        query["$or"] = [
-            {"name": {"$regex": esc, "$options": "i"}},
-            {"identifier": {"$regex": esc, "$options": "i"}},
-            {"username": {"$regex": esc, "$options": "i"}},
-            {"email": {"$regex": esc, "$options": "i"}}
-        ]
-
-    docs = list(col.find(query, {"password_hash": 0, "password": 0}).sort("identifier", 1))
+    all_students = UserModel.get_all(role='Student')
+    docs = []
+    for s in all_students:
+        if dept and dept.lower() != 'all' and (s.get('department') or '').lower() != dept.lower():
+            continue
+        if year and year.lower() != 'all' and (s.get('year') or '').lower() != year.lower():
+            continue
+        if section and section.lower() != 'all' and (s.get('section') or '').lower() != section.lower():
+            continue
+        if status and status.lower() != 'all' and (s.get('account_status') or '').lower() != status.lower():
+            continue
+        if search:
+            match_str = f"{s.get('name', '')} {s.get('identifier', '')} {s.get('email', '')}".lower()
+            if search not in match_str:
+                continue
+        docs.append(s)
 
     # Enrich students with academic information and OD counts
     acad_docs = {a['student_id']: a for a in AcademicRecordModel.list_all() if a and 'student_id' in a}
@@ -445,24 +440,6 @@ def update_admin_student(student_id):
                     'error': f"The Username '{norm_uname}' is already taken by another user."
                 }), 409
             updates['username'] = norm_uname
-
-            # Synchronize historical related records across collections
-            old_ident = user.get('identifier')
-            if old_ident:
-                try:
-                    od_col = od_requests_collection()
-                    if od_col is not None:
-                        od_col.update_many({'student_reg_no': old_ident}, {'$set': {'student_reg_no': new_ident}})
-
-                    acad_col = academic_records_collection()
-                    if acad_col is not None:
-                        acad_col.update_many({'register_number': old_ident}, {'$set': {'register_number': new_ident}})
-
-                    cert_col = certificates_collection()
-                    if cert_col is not None:
-                        cert_col.update_many({'student_reg_no': old_ident}, {'$set': {'student_reg_no': new_ident}})
-                except Exception as sync_err:
-                    print(f"[!] Warning: Error cascading student identifier update: {sync_err}")
 
     # 3. Password Update & Secure Hashing (Bug 3)
     if 'password' in data and data['password'] is not None:
@@ -682,33 +659,26 @@ def download_student_error_report(preview_token=None):
 @role_required('Admin')
 def get_admin_faculty():
     """Retrieve all faculty members (Mentor, Class Incharge, HOD) with filters."""
-    col = users_collection()
-    if col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable'}), 500
-
-    query: dict[str, Any] = {
-        "role": {"$in": ["Mentor", "Class Incharge", "HOD", "Counsellor", "Faculty"]}
-    }
-
     role_filter = (request.args.get('role') or '').strip()
     dept_filter = (request.args.get('department') or '').strip()
-    search = (request.args.get('search') or '').strip()
+    search = (request.args.get('search') or '').strip().lower()
 
-    if role_filter and role_filter.lower() != 'all':
-        query["role"] = {"$regex": f"^{re.escape(role_filter)}$", "$options": "i"}
-    if dept_filter and dept_filter.lower() != 'all':
-        query["department"] = {"$regex": f"^{re.escape(dept_filter)}$", "$options": "i"}
+    all_users = UserModel.get_all()
+    faculty_roles = {'mentor', 'class incharge', 'class_incharge', 'hod', 'counsellor', 'faculty', 'admin'}
+    faculty_pool = [u for u in all_users if (u.get('role') or '').lower() in faculty_roles]
 
-    if search:
-        esc = re.escape(search)
-        query["$or"] = [
-            {"name": {"$regex": esc, "$options": "i"}},
-            {"identifier": {"$regex": esc, "$options": "i"}},
-            {"username": {"$regex": esc, "$options": "i"}},
-            {"email": {"$regex": esc, "$options": "i"}}
-        ]
+    docs = []
+    for f in faculty_pool:
+        if role_filter and role_filter.lower() != 'all' and (f.get('role') or '').lower() != role_filter.lower():
+            continue
+        if dept_filter and dept_filter.lower() != 'all' and (f.get('department') or '').lower() != dept_filter.lower():
+            continue
+        if search:
+            match_str = f"{f.get('name', '')} {f.get('identifier', '')} {f.get('email', '')} {f.get('designation', '')}".lower()
+            if search not in match_str:
+                continue
+        docs.append(f)
 
-    docs = list(col.find(query, {"password_hash": 0, "password": 0}).sort("name", 1))
     faculty_list = []
     for d in docs:
         faculty_list.append({
@@ -1089,25 +1059,15 @@ def get_admin_academic_roster():
     Roster of all students with CGPA, attendance %, CAT marks, OD allowance,
     and centralized OD eligibility categorization.
     """
-    col = users_collection()
-    if col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable'}), 500
+    students = UserModel.get_all(role='Student')
+    search = (request.args.get('search') or '').strip().lower()
+    dept = (request.args.get('department') or '').strip().lower()
 
-    query: dict[str, Any] = {"role": {"$regex": "^student$", "$options": "i"}}
-    search = (request.args.get('search') or '').strip()
-    dept = (request.args.get('department') or '').strip()
-
-    if dept and dept.lower() != 'all':
-        query["department"] = {"$regex": f"^{re.escape(dept)}$", "$options": "i"}
-
+    if dept and dept != 'all':
+        students = [s for s in students if (s.get('department') or '').lower() == dept]
     if search:
-        esc = re.escape(search)
-        query["$or"] = [
-            {"name": {"$regex": esc, "$options": "i"}},
-            {"identifier": {"$regex": esc, "$options": "i"}}
-        ]
+        students = [s for s in students if search in f"{s.get('name', '')} {s.get('identifier', '')}".lower()]
 
-    students = list(col.find(query, {"password_hash": 0, "password": 0}).sort("identifier", 1))
     acad_docs = {a['student_id']: a for a in AcademicRecordModel.list_all() if a and 'student_id' in a}
 
     roster = []
@@ -1580,19 +1540,19 @@ def export_admin_reports_excel():
 @role_required('Admin')
 def get_admin_audit_logs():
     """Retrieve institutional administrative audit logs with search and filter controls."""
-    col = od_history_collection()
-    if col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable'}), 500
-
+    logs = ODHistoryModel.list_all()
     search = (request.args.get('search') or '').strip().lower()
-    action = (request.args.get('action') or '').strip()
+    action = (request.args.get('action') or '').strip().lower()
 
-    query: dict[str, Any] = {}
-    if action and action.lower() != 'all':
-        query['action'] = {"$regex": f"^{re.escape(action)}$", "$options": "i"}
-
-    cursor = col.find(query).sort("created_at", -1).limit(150)
-    raw_logs = [ODHistoryModel._format_doc(d) for d in cursor]
+    filtered = []
+    for l in logs:
+        if action and action != 'all' and (l.get('action') or '').lower() != action:
+            continue
+        if search:
+            match_str = f"{l.get('action')} {l.get('performed_by_name')} {l.get('remarks')} {l.get('request_id')} {l.get('student_id')}".lower()
+            if search not in match_str:
+                continue
+        filtered.append(l)
 
     filtered = []
     for l in raw_logs:
@@ -1617,7 +1577,6 @@ def get_admin_audit_logs():
 @role_required('Admin')
 def get_admin_system_settings():
     """Retrieve central institutional rules and thresholds."""
-    col = system_settings_collection()
     default_settings = {
         "id": "SYSTEM_CONFIG",
         "attendance_threshold_percent": 75.0,
@@ -1638,23 +1597,21 @@ def get_admin_system_settings():
         "updated_by": "System Administrator"
     }
 
-    if col is None:
-        return jsonify({'success': True, 'settings': default_settings, 'data': default_settings}), 200
+    try:
+        with session_scope() as session:
+            st = session.query(SystemSetting).filter_by(id="SYSTEM_CONFIG").first()
+            if st and isinstance(st.value, dict):
+                cfg = dict(st.value)
+                cfg['id'] = st.id
+                cfg['min_attendance_percent'] = cfg.get('min_attendance_percent', cfg.get('attendance_threshold_percent', 75.0))
+                cfg['cgpa_exemption_threshold'] = cfg.get('cgpa_exemption_threshold', cfg.get('cgpa_high_performer_threshold', 8.5))
+                cfg['max_od_allowance_percent'] = cfg.get('max_od_allowance_percent', cfg.get('max_od_limit_percent', 10.0))
+                cfg['semester_working_days'] = cfg.get('semester_working_days', cfg.get('total_working_days', 120))
+                return jsonify({'success': True, 'settings': cfg, 'data': cfg}), 200
+    except Exception:
+        pass
 
-    cfg = col.find_one({"id": "SYSTEM_CONFIG"})
-    if not cfg:
-        col.insert_one(default_settings)
-        cfg = default_settings
-    else:
-        cfg = dict(cfg)
-        cfg.pop('_id', None)
-
-    cfg['min_attendance_percent'] = cfg.get('min_attendance_percent', cfg.get('attendance_threshold_percent', 75.0))
-    cfg['cgpa_exemption_threshold'] = cfg.get('cgpa_exemption_threshold', cfg.get('cgpa_high_performer_threshold', 8.5))
-    cfg['max_od_allowance_percent'] = cfg.get('max_od_allowance_percent', cfg.get('max_od_limit_percent', 10.0))
-    cfg['semester_working_days'] = cfg.get('semester_working_days', cfg.get('total_working_days', 120))
-
-    return jsonify({'success': True, 'settings': cfg, 'data': cfg}), 200
+    return jsonify({'success': True, 'settings': default_settings, 'data': default_settings}), 200
 
 
 @admin_bp.route('/settings', methods=['PUT'])
@@ -1662,10 +1619,6 @@ def get_admin_system_settings():
 def update_admin_system_settings():
     """Update central institutional rules and thresholds."""
     data = request.get_json(silent=True) or {}
-    col = system_settings_collection()
-    if col is None:
-        return jsonify({'success': False, 'error': 'Database unavailable'}), 500
-
     att = float(data.get('min_attendance_percent', data.get('attendance_threshold_percent', 75.0)))
     cgpa = float(data.get('cgpa_exemption_threshold', data.get('cgpa_high_performer_threshold', 8.5)))
     max_od = float(data.get('max_od_allowance_percent', data.get('max_od_limit_percent', 10.0)))
@@ -1693,7 +1646,19 @@ def update_admin_system_settings():
         "updated_by": admin_name
     }
 
-    col.update_one({"id": "SYSTEM_CONFIG"}, {"$set": updates}, upsert=True)
+    try:
+        with session_scope() as session:
+            st = session.query(SystemSetting).filter_by(id="SYSTEM_CONFIG").first()
+            if not st:
+                st = SystemSetting(id="SYSTEM_CONFIG", value=updates, updated_by=admin_name)
+                session.add(st)
+            else:
+                st.value = updates
+                st.updated_by = admin_name
+                st.updated_at = datetime.now()
+    except Exception as e:
+        return jsonify({'success': False, 'error': f"Failed to update settings: {str(e)}"}), 500
+
     _log_admin_action(curr, 'SYSTEM_SETTINGS_UPDATED', f"Updated thresholds: Attendance {att}%, CGPA {cgpa}, Max OD {max_od}%")
 
     return jsonify({

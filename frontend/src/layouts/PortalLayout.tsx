@@ -137,15 +137,21 @@ export const PortalLayout: React.FC<PortalLayoutProps> = ({ role, children }) =>
           
           {/* Institution & Portal Title */}
           <div className="flex items-center gap-3.5">
-            <Link to={getRoleLoginPath(role)} className="flex items-center gap-2.5 sm:gap-3 group" title="Return to Portal Homepage">
-              <img 
-                src="/rec_logo.png" 
-                alt="Rajalakshmi Engineering College" 
-                className="h-8 sm:h-9 max-h-9 w-auto object-contain shrink-0 group-hover:opacity-90 transition-opacity drop-shadow-xs" 
-              />
-              <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${getRoleBadgeStyle(role)} shrink-0`}>
-                {role} Portal
-              </span>
+            <Link to={getRoleLoginPath(role)} className="flex items-center gap-2.5 group" title="Return to Portal Homepage">
+              <div className="bg-primary-600 p-2 rounded-xl text-white shadow-sm shadow-primary-600/30 shrink-0 group-hover:scale-105 transition-transform">
+                <Landmark className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-black text-base text-slate-900 tracking-tight leading-none">OD-TRACKER</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${getRoleBadgeStyle(role)} shrink-0`}>
+                    {role} Portal
+                  </span>
+                </div>
+                <span className="text-[10px] text-slate-400 font-bold tracking-wider uppercase block mt-0.5">
+                  Rajalakshmi Engineering College
+                </span>
+              </div>
             </Link>
           </div>
 

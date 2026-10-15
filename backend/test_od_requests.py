@@ -207,8 +207,8 @@ class ODRequestTestCase(unittest.TestCase):
                 'eventType': 'Workshop',
                 'eventOrganizer': 'Test Org',
                 'venue': 'Main Hall',
-                'fromDate': '2026-10-10',
-                'toDate': '2026-10-10',
+                'fromDate': '2026-10-20',
+                'toDate': '2026-10-20',
                 'reason': 'Security verification',
                 'od_letter': dummy_exe
             },

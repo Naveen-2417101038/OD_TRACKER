@@ -8,23 +8,216 @@ Falls back gracefully to clean console logging in development mode if SMTP is un
 import os
 import smtplib
 import threading
+from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-try:
-    from backend.config import Config
-except ImportError:
-    from config import Config
+import base64
+import json
+import urllib.request
+import urllib.error
 
-def send_email(to_email: str, subject: str, html_body: str, text_body: str) -> bool:
+try:
+    # pyrefly: ignore [missing-import]
+    from backend.config import Config  # type: ignore
+except ImportError:
+    # pyrefly: ignore [missing-import]
+    from config import Config  # type: ignore
+
+def send_resend_email(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    recipient_name: str | None = None
+) -> dict:
     """
-    Send an email via SMTP server if configured, else log to console in dev mode.
-    Returns True if sent/handled successfully, False if delivery fails.
+    Send a transactional email via Resend REST API using standard urllib HTTP client.
+    Requires RESEND_API_KEY in environment or Config.
+    Endpoint: https://api.resend.com/emails
+    Headers: Authorization: Bearer RESEND_API_KEY, Content-Type: application/json
+    Returns dict: {"success": bool, "message_id": str | None, "error": str | None}
     """
     to_email = (to_email or '').strip().lower()
     if not to_email:
+        return {"success": False, "message_id": None, "error": "Invalid recipient email"}
+
+    api_key = getattr(Config, 'RESEND_API_KEY', None) or os.environ.get('RESEND_API_KEY', '')
+    from_email = getattr(Config, 'RESEND_FROM_EMAIL', None) or os.environ.get('RESEND_FROM_EMAIL', '') or os.environ.get('RESEND_SENDER_EMAIL', 'onboarding@resend.dev')
+    from_name = getattr(Config, 'RESEND_FROM_NAME', None) or os.environ.get('RESEND_FROM_NAME', '') or os.environ.get('RESEND_SENDER_NAME', 'OD Tracking Application')
+
+    if not api_key:
+        print("[-] [RESEND] RESEND_API_KEY is not configured.", flush=True)
+        return {"success": False, "message_id": None, "error": "RESEND_API_KEY is not configured"}
+
+    url = "https://api.resend.com/emails"
+
+    if from_name and "<" not in from_email:
+        sender_formatted = f"{from_name} <{from_email}>"
+    else:
+        sender_formatted = from_email
+
+    payload = {
+        "from": sender_formatted,
+        "to": [to_email],
+        "subject": subject,
+        "html": html_body,
+        "text": text_body
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) OD-Tracking-Portal/1.0"
+    }
+
+    try:
+        print(f"[RESEND] Attempting to deliver email to <{to_email}> from '{sender_formatted}'...", flush=True)
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+
+        with urllib.request.urlopen(req, timeout=12) as response:
+            resp_bytes = response.read()
+            resp_json = json.loads(resp_bytes.decode('utf-8')) if resp_bytes else {}
+            message_id = resp_json.get('id') or resp_json.get('message_id')
+            if response.status in (200, 201):
+                print(f"[+] [RESEND SUCCESS] Email sent successfully to {to_email} (ID: {message_id})", flush=True)
+                return {"success": True, "message_id": message_id, "error": None}
+            else:
+                err_msg = f"HTTP {response.status}: {resp_bytes.decode('utf-8')}"
+                print(f"[-] [RESEND ERROR] ({response.status}): {err_msg}", flush=True)
+                return {"success": False, "message_id": None, "error": err_msg}
+    except urllib.error.HTTPError as e:
+        err_content = e.read().decode('utf-8') if hasattr(e, 'read') else str(e)
+        print(f"[-] [RESEND HTTP ERROR] ({e.code}) for {to_email}: {err_content}", flush=True)
+
+        # Automatic fallback: if the sender domain is unverified, fallback to onboarding@resend.dev
+        if ("domain is not verified" in err_content.lower() or "not verified" in err_content.lower()) and "onboarding@resend.dev" not in sender_formatted:
+            fallback_sender = f"{from_name} <onboarding@resend.dev>" if from_name else "onboarding@resend.dev"
+            print(f"[!] [RESEND DOMAIN FALLBACK] Domain unverified for '{sender_formatted}'. Retrying with '{fallback_sender}'...", flush=True)
+            payload["from"] = fallback_sender
+            try:
+                data_retry = json.dumps(payload).encode('utf-8')
+                req_retry = urllib.request.Request(url, data=data_retry, headers=headers, method="POST")
+                with urllib.request.urlopen(req_retry, timeout=12) as response_retry:
+                    resp_bytes_retry = response_retry.read()
+                    resp_json_retry = json.loads(resp_bytes_retry.decode('utf-8')) if resp_bytes_retry else {}
+                    message_id = resp_json_retry.get('id') or resp_json_retry.get('message_id')
+                    print(f"[+] [RESEND SUCCESS (FALLBACK)] Email sent successfully to {to_email} via {fallback_sender} (ID: {message_id})", flush=True)
+                    return {"success": True, "message_id": message_id, "error": None}
+            except Exception as retry_err:
+                print(f"[-] [RESEND FALLBACK ERROR] Failed delivery with fallback sender: {retry_err}", flush=True)
+
+        return {"success": False, "message_id": None, "error": f"HTTP {e.code}: {err_content}"}
+    except Exception as e:
+        err_str = f"{type(e).__name__} - {e}"
+        print(f"[-] [RESEND DELIVERY FAILED] to {to_email}: {err_str}", flush=True)
+        return {"success": False, "message_id": None, "error": err_str}
+
+
+def log_notification_record(
+    user_id: str | None,
+    to_email: str,
+    notification_type: str,
+    subject: str,
+    title: str,
+    message: str,
+    delivery_status: str,
+    provider_message_id: str | None = None,
+    related_request_id: str | None = None,
+    error_details: str | None = None
+):
+    """
+    Log an audit record of notification delivery to Microsoft SQL Server notifications table.
+    Tracks Notification ID, Recipient User ID, Notification Type, Related OD Request ID,
+    Creation Timestamp, Delivery Status, Provider Message ID, Retry Count, and Safe Failure Details.
+    """
+    try:
+        from backend.models.notification import NotificationModel
+        notif_data = {
+            "user_id": str(user_id) if user_id and not ('@' in str(user_id)) else None,
+            "recipient_email": str(to_email),
+            "type": notification_type,
+            "notification_type": notification_type,
+            "request_id": related_request_id,
+            "related_request_id": related_request_id,
+            "title": title or subject,
+            "subject": subject,
+            "message": message[:500] if message else "",
+            "delivery_status": delivery_status,
+            "status": delivery_status,
+            "provider_message_id": provider_message_id,
+            "retry_count": 0,
+            "error_details": error_details[:500] if error_details else None,
+            "is_read": 0,
+        }
+        res = NotificationModel.create(notif_data)
+        return res.get('id') if res else None
+    except Exception as e:
+        print(f"[-] Failed to log notification record: {e}")
+        return None
+
+
+def send_email(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    recipient_name: str | None = None,
+    related_request_id: str | None = None,
+    notification_type: str = "general",
+    user_id: str | None = None
+) -> bool:
+    """
+    Primary transactional email dispatcher for OD Tracking Application.
+    Order of preference:
+    1. Resend REST API (https://api.resend.com/emails) if RESEND_API_KEY is configured
+    2. Standard SMTP server if SMTP_HOST is configured
+    3. Console Logger fallback in development mode
+    """
+    to_email = (to_email or '').strip().lower()
+    if not to_email:
+        print("[-] [EMAIL SERVICE] send_email called with empty recipient email.", flush=True)
         return False
 
+    print(f"\n[EMAIL SERVICE] Dispatching email: Subject='{subject}' | To=<{to_email}>", flush=True)
+
+    # 1. Try Resend REST API first
+    resend_api_key = getattr(Config, 'RESEND_API_KEY', None) or os.environ.get('RESEND_API_KEY', '')
+    if resend_api_key:
+        print(f"[EMAIL SERVICE] Provider [1/2]: Resend REST API configured. Attempting delivery...", flush=True)
+        resend_res = send_resend_email(to_email, subject, html_body, text_body, recipient_name=recipient_name)
+        if resend_res.get('success'):
+            print(f"[+] [EMAIL SERVICE] Email delivered successfully via Resend API to {to_email}", flush=True)
+            log_notification_record(
+                user_id=user_id,
+                to_email=to_email,
+                notification_type=notification_type,
+                subject=subject,
+                title=subject,
+                message=text_body,
+                delivery_status="sent",
+                provider_message_id=resend_res.get('message_id'),
+                related_request_id=related_request_id
+            )
+            return True
+        else:
+            print(f"[!] [EMAIL SERVICE] Resend API delivery failed: {resend_res.get('error')}. Falling back...", flush=True)
+            log_notification_record(
+                user_id=user_id,
+                to_email=to_email,
+                notification_type=notification_type,
+                subject=subject,
+                title=subject,
+                message=text_body,
+                delivery_status="failed",
+                related_request_id=related_request_id,
+                error_details=resend_res.get('error')
+            )
+    else:
+        print("[EMAIL SERVICE] Provider [1/2]: Resend API key is NOT configured.", flush=True)
+
+    # 2. Try SMTP Server
     smtp_host = getattr(Config, 'SMTP_HOST', None) or os.environ.get('SMTP_HOST', '')
     smtp_port = int(getattr(Config, 'SMTP_PORT', None) or os.environ.get('SMTP_PORT', 587))
     smtp_user = getattr(Config, 'SMTP_EMAIL', None) or getattr(Config, 'SMTP_USERNAME', None) or os.environ.get('SMTP_EMAIL', '') or os.environ.get('SMTP_USERNAME', '')
@@ -32,12 +225,12 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: str) -> b
     from_email = getattr(Config, 'MAIL_DEFAULT_SENDER', None) or getattr(Config, 'SMTP_FROM_EMAIL', None) or os.environ.get('MAIL_DEFAULT_SENDER', 'noreply@rajalakshmi.edu.in')
     use_tls = getattr(Config, 'SMTP_USE_TLS', True)
 
-    # Check if real SMTP credentials are provided
     if smtp_host and smtp_user and smtp_pass:
+        print(f"[EMAIL SERVICE] Provider [2/2]: SMTP configured ({smtp_host}:{smtp_port}). Attempting delivery...", flush=True)
         try:
             msg = MIMEMultipart('alternative')
             msg['Subject'] = subject
-            msg['From'] = f"Rajalakshmi Engineering College OD Portal <{from_email}>"
+            msg['From'] = f"OD Tracking Application <{from_email}>"
             msg['To'] = to_email
 
             part1 = MIMEText(text_body, 'plain', 'utf-8')
@@ -55,29 +248,74 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: str) -> b
             server.login(smtp_user, smtp_pass)
             server.sendmail(from_email, [to_email], msg.as_string())
             server.quit()
-            print(f"[+] SMTP: Email sent successfully to {to_email} (Subject: {subject})")
+            print(f"[+] [EMAIL SERVICE] SMTP: Email sent successfully to {to_email} (Subject: {subject})", flush=True)
+            log_notification_record(
+                user_id=user_id,
+                to_email=to_email,
+                notification_type=notification_type,
+                subject=subject,
+                title=subject,
+                message=text_body,
+                delivery_status="sent",
+                related_request_id=related_request_id
+            )
             return True
         except Exception as e:
-            # Securely log failure without exposing passwords
-            print(f"[-] SMTP Delivery Failed to {to_email}: {type(e).__name__} - {e}")
-            return False
+            print(f"[-] [EMAIL SERVICE] SMTP Delivery Failed to {to_email}: {type(e).__name__} - {e}", flush=True)
+    else:
+        print("[EMAIL SERVICE] Provider [2/2]: SMTP host/credentials NOT fully configured.", flush=True)
 
-    # Development / Fallback Clean Console Logger
-    print("\n" + "=" * 80)
-    print(f"  [EMAIL DISPATCH - REC OD TRACKING PORTAL]")
-    print(f"  To:       {to_email}")
-    print(f"  Subject:  {subject}")
-    print("-" * 80)
-    print(text_body)
-    print("=" * 80 + "\n")
+    # 3. Development / Fallback Clean Console Logger
+    print("\n" + "=" * 80, flush=True)
+    print(f"  [EMAIL DISPATCH - CONSOLE LOG FALLBACK]", flush=True)
+    print(f"  To:       {to_email}", flush=True)
+    print(f"  Subject:  {subject}", flush=True)
+    print("-" * 80, flush=True)
+    print(text_body, flush=True)
+    print("=" * 80 + "\n", flush=True)
+    log_notification_record(
+        user_id=user_id,
+        to_email=to_email,
+        notification_type=notification_type,
+        subject=subject,
+        title=subject,
+        message=text_body,
+        delivery_status="sent_console",
+        related_request_id=related_request_id
+    )
     return True
 
 
-def send_email_async(to_email: str, subject: str, html_body: str, text_body: str):
+def send_email_async(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    recipient_name: str | None = None,
+    related_request_id: str | None = None,
+    notification_type: str = "general",
+    user_id: str | None = None
+):
     """Dispatch email in a daemon background thread so HTTP response is non-blocking."""
+    def _worker():
+        try:
+            print(f"[EMAIL ASYNC THREAD] Background dispatch started for <{to_email}>", flush=True)
+            res = send_email(
+                to_email,
+                subject,
+                html_body,
+                text_body,
+                recipient_name=recipient_name,
+                related_request_id=related_request_id,
+                notification_type=notification_type,
+                user_id=user_id
+            )
+            print(f"[EMAIL ASYNC THREAD] Background dispatch finished: result={res}", flush=True)
+        except Exception as e:
+            print(f"[-] [EMAIL ASYNC THREAD ERROR] Exception sending to {to_email}: {e}", flush=True)
+
     t = threading.Thread(
-        target=send_email,
-        args=(to_email, subject, html_body, text_body),
+        target=_worker,
         daemon=True,
         name=f"EmailDispatch-{to_email[:10]}"
     )
@@ -85,7 +323,7 @@ def send_email_async(to_email: str, subject: str, html_body: str, text_body: str
     return t
 
 
-def _render_base_email(title: str, badge: str, recipient_name: str, main_content_html: str, action_url: str = None, action_label: str = None) -> str:
+def _render_base_email(title: str, badge: str, recipient_name: str, main_content_html: str, action_url: str | None = None, action_label: str | None = None) -> str:
     """Generate consistent, responsive, professional HTML email template."""
     action_button_html = ""
     if action_url and action_label:
@@ -173,18 +411,18 @@ Rajalakshmi Engineering College Administration
     return send_email(to_email, subject, html_body, text_body)
 
 
-def send_otp_email(to_email: str, recipient_name_or_otp: str, otp_code_or_name: str = None, purpose: str = "password change") -> bool:
+def send_otp_email(to_email: str, recipient_name_or_otp: str, otp_code_or_name: str | None = None, purpose: str = "password change") -> bool:
     """Send 6-digit cryptographically secure OTP with 5-minute expiry."""
     # Support flexible argument order: (to, name, otp) or (to, otp, name)
+    recipient_name: str = str(recipient_name_or_otp)
+    otp_code: str = str(otp_code_or_name or "000000")
+
     if otp_code_or_name is not None and str(recipient_name_or_otp).isdigit() and len(str(recipient_name_or_otp)) == 6:
         otp_code = str(recipient_name_or_otp)
         recipient_name = str(otp_code_or_name)
     elif otp_code_or_name is not None and str(otp_code_or_name).isdigit() and len(str(otp_code_or_name)) == 6:
         recipient_name = str(recipient_name_or_otp)
         otp_code = str(otp_code_or_name)
-    else:
-        recipient_name = str(recipient_name_or_otp)
-        otp_code = str(otp_code_or_name or "000000")
 
     subject = f"Your {otp_code} Verification Code – REC OD Portal"
     
@@ -227,28 +465,41 @@ Rajalakshmi Engineering College Administration
 
 
 def send_password_changed_notification(to_email: str, recipient_name: str) -> bool:
-    """Send alert confirming that password was successfully modified."""
-    subject = "Security Alert: Password Changed Successfully – REC OD Portal"
-    
+    """
+    Feature B — Password Changed Email Alert
+    Subject: Your OD Tracking Application Password Has Been Changed
+    Dispatched strictly after a successful password update.
+    """
+    subject = "Your OD Tracking Application Password Has Been Changed"
+    change_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
+    support_contact = "admin@rajalakshmi.edu.in"
+
     text_body = f"""Dear {recipient_name},
 
-This email confirms that the password for your Rajalakshmi Engineering College OD Tracking account was successfully changed.
+This security alert confirms that the password for your OD Tracking Application account was changed successfully on {change_time_str}.
 
-If you made this change, no further action is required.
+SECURITY WARNING:
+If you did not make this change, your account credentials may be compromised. Please contact the institutional IT administrator ({support_contact}) immediately or reset your password using the login page.
 
-If you DID NOT make this change, please report this immediately to the IT Department or reset your password using the Forgot Password service.
+Application: OD Tracking Application
+Support Contact: {support_contact}
 
 Best regards,
-Rajalakshmi Engineering College IT Team
+OD Tracking Application Administrator
     """
 
     main_html = f"""
     <div class="card-box" style="border-left: 4px solid #10b981; background-color: #f0fdf4;">
-      <strong style="color: #15803d; font-size: 15px; display: block; margin-bottom: 6px;">Password Updated Successfully</strong>
-      <p style="margin: 0; font-size: 13px; color: #166534;">The password for your account has been updated securely. You can now use your new password to sign in across all portals.</p>
+      <strong style="color: #15803d; font-size: 15px; display: block; margin-bottom: 6px;">Password Changed Successfully</strong>
+      <p style="margin: 0; font-size: 13px; color: #166534;">The password for your OD Tracking Application account was updated on <strong>{change_time_str}</strong>.</p>
     </div>
 
-    <p style="color: #475569; font-size: 13px;">If you initiated this change, you may safely disregard this message. If you did not perform this change, please contact the institutional IT administrator immediately to secure your credentials.</p>
+    <div class="card-box" style="border-left: 4px solid #ef4444; background-color: #fef2f2;">
+      <strong style="color: #b91c1c; font-size: 13px; display: block; margin-bottom: 4px;">Security Warning:</strong>
+      <span style="font-size: 12px; color: #991b1b;">
+        If you did not initiate this change, please report it immediately to the institution administrator at <strong>{support_contact}</strong> to restore account security.
+      </span>
+    </div>
     """
 
     html_body = _render_base_email("Password Changed Successfully", "Security Alert", recipient_name, main_html)
@@ -287,6 +538,70 @@ Rajalakshmi Engineering College Administration
 # 2. OD Application & Workflow Lifecycle Email Notifications
 # ──────────────────────────────────────────────────────────────────────────────
 
+def send_od_rejected_student_notification(
+    to_email: str,
+    student_name: str,
+    request_id: str,
+    event_name: str,
+    event_date: str,
+    rejection_status: str,
+    rejection_remarks: str = "",
+    dashboard_status: str = "Rejected"
+) -> bool:
+    """
+    Feature C — OD Rejection Email
+    Subject: OD Request Rejected — [OD Request ID]
+    Dispatched only after the rejection is saved successfully in database.
+    """
+    base_url = getattr(Config, 'APP_BASE_URL', 'http://localhost:5173').rstrip('/')
+    dash_url = f"{base_url}/student/dashboard"
+    subject = f"OD Request Rejected — {request_id}"
+
+    text_body = f"""Dear {student_name},
+
+Your On-Duty (OD) application has been reviewed and rejected by the authorized reviewer.
+
+OD Request Details:
+----------------------------------------
+Student Name:       {student_name}
+OD Request ID:      {request_id}
+Event Name:         {event_name}
+Event / OD Date:    {event_date}
+Rejection Status:   {rejection_status}
+Dashboard Status:   {dashboard_status}
+Rejection Remarks:  {rejection_remarks or 'No specific remarks provided.'}
+----------------------------------------
+
+Instructions:
+Please log in to the OD Tracking Application to view complete details or submit a revised request if permitted by your department:
+{dash_url}
+
+Best regards,
+OD Tracking Application
+    """
+
+    main_html = f"""
+    <p>Your On-Duty (OD) request has been reviewed and declined.</p>
+    <div class="card-box" style="border-left: 4px solid #ef4444; background-color: #fef2f2;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <tr><td style="padding: 4px 0; color: #64748b;">Student Name:</td><td style="font-weight: 700; color: #0f172a;">{student_name}</td></tr>
+        <tr><td style="padding: 4px 0; color: #64748b;">OD Request ID:</td><td style="font-weight: 700; color: #0f172a; font-family: monospace;">{request_id}</td></tr>
+        <tr><td style="padding: 4px 0; color: #64748b;">Event Name:</td><td style="font-weight: 700; color: #0f172a;">{event_name}</td></tr>
+        <tr><td style="padding: 4px 0; color: #64748b;">Event / OD Date:</td><td style="font-weight: 600; color: #0f172a;">{event_date}</td></tr>
+        <tr><td style="padding: 4px 0; color: #64748b;">Rejection Status:</td><td><span style="background: #fecaca; color: #991b1b; padding: 2px 8px; border-radius: 4px; font-weight: 700;">{rejection_status}</span></td></tr>
+        <tr><td style="padding: 4px 0; color: #64748b;">Dashboard Status:</td><td style="font-weight: 600; color: #b91c1c;">{dashboard_status}</td></tr>
+      </table>
+      <div style="background-color: #ffffff; border: 1px solid #fecaca; border-radius: 6px; padding: 10px; margin-top: 12px; font-size: 13px; color: #7f1d1d;">
+        <strong>Reviewer Remarks:</strong><br>{rejection_remarks or 'No specific remarks provided.'}
+      </div>
+    </div>
+    <p style="font-size: 13px; color: #475569;">Please log in to your student dashboard for further details.</p>
+    """
+
+    html_body = _render_base_email(f"OD Request Rejected — {request_id}", "Decision Notification", student_name, main_html, dash_url, "Log In to Student Dashboard")
+    return send_email_async(to_email, subject, html_body, text_body)
+
+
 def send_od_submitted_student_notification(to_email: str, student_name: str, event_name: str, dates: str, request_id: str):
     """Notify student that their OD request was submitted successfully."""
     base_url = getattr(Config, 'APP_BASE_URL', 'http://localhost:5173').rstrip('/')
@@ -319,7 +634,7 @@ REC OD Tracking System
     """
 
     html_body = _render_base_email("OD Application Submitted", "OD Submission", student_name, main_html, dash_url, "Track My Request")
-    return send_email_async(to_email, subject, html_body, text_body)
+    return send_email_async(to_email, subject, html_body, text_body, recipient_name=student_name, related_request_id=request_id, notification_type="OD_Submitted")
 
 
 def send_new_od_mentor_notification(mentor_email: str, mentor_name: str, student_name: str, event_name: str, dates: str, request_id: str):
@@ -357,7 +672,7 @@ REC OD Tracking System
     """
 
     html_body = _render_base_email("New OD Request Awaiting Mentor Review", "Mentor Review Required", mentor_name, main_html, review_url, "Open Faculty Portal")
-    return send_email_async(mentor_email, subject, html_body, text_body)
+    return send_email_async(mentor_email, subject, html_body, text_body, recipient_name=mentor_name, related_request_id=request_id, notification_type="OD_Mentor_Review")
 
 
 def send_od_mentor_approved_student_notification(to_email: str, student_name: str, event_name: str, remarks: str = ""):
@@ -419,38 +734,21 @@ REC OD Tracking System
     """
 
     html_body = _render_base_email("OD Awaiting Class Incharge Review", "Action Required", ci_name, main_html, ci_url, "Review Request")
-    return send_email_async(ci_email, subject, html_body, text_body)
+    return send_email_async(ci_email, subject, html_body, text_body, recipient_name=ci_name, related_request_id=request_id, notification_type="OD_CI_Review")
 
 
-def send_od_mentor_rejected_student_notification(to_email: str, student_name: str, event_name: str, reason: str):
-    """Notify student that Mentor rejected the OD request."""
-    subject = f"OD Application Update: Not Recommended by Mentor – {event_name}"
-    
-    text_body = f"""Dear {student_name},
-
-Your On-Duty application for '{event_name}' was not recommended by your Faculty Mentor.
-
-Reason:
-{reason}
-
-If you have questions, please consult with your Faculty Mentor.
-
-Best regards,
-REC OD Tracking System
-    """
-
-    main_html = f"""
-    <div class="card-box" style="border-left: 4px solid #ef4444; background-color: #fef2f2;">
-      <strong style="color: #b91c1c; font-size: 14px;">OD Application Not Recommended</strong>
-      <p style="margin: 4px 0 0 0; font-size: 13px; color: #991b1b;">Your OD application for <strong>{event_name}</strong> was declined by your Faculty Mentor.</p>
-      <div style="background-color: #ffffff; border: 1px solid #fecaca; border-radius: 6px; padding: 10px; margin-top: 10px; font-size: 13px; color: #7f1d1d;">
-        <strong>Reason for rejection:</strong><br>{reason}
-      </div>
-    </div>
-    """
-
-    html_body = _render_base_email("OD Request Not Recommended", "Decision Notification", student_name, main_html)
-    return send_email_async(to_email, subject, html_body, text_body)
+def send_od_mentor_rejected_student_notification(to_email: str, student_name: str, event_name: str, reason: str, request_id: str = "N/A", event_date: str = "N/A"):
+    """Notify student that Mentor rejected the OD request (delegates to Feature C master function)."""
+    return send_od_rejected_student_notification(
+        to_email=to_email,
+        student_name=student_name,
+        request_id=request_id if request_id != "N/A" else f"OD-{event_name[:10]}",
+        event_name=event_name,
+        event_date=event_date,
+        rejection_status="Mentor Rejected",
+        rejection_remarks=reason,
+        dashboard_status="Mentor Rejected"
+    )
 
 
 def send_od_ci_approved_student_notification(to_email: str, student_name: str, event_name: str, remarks: str = ""):
@@ -510,103 +808,221 @@ REC OD Tracking System
     """
 
     html_body = _render_base_email("OD Awaiting HOD Sanction", "Executive Sanction Required", hod_name, main_html, hod_url, "Open HOD Executive Dashboard")
-    return send_email_async(hod_email, subject, html_body, text_body)
+    return send_email_async(hod_email, subject, html_body, text_body, recipient_name=hod_name, related_request_id=request_id, notification_type="OD_HOD_Sanction")
 
 
-def send_od_ci_rejected_student_notification(to_email: str, student_name: str, event_name: str, reason: str):
-    """Notify student that Class Incharge rejected the OD request."""
-    subject = f"OD Application Update: Declined by Class Incharge – {event_name}"
-    
-    text_body = f"""Dear {student_name},
+def send_od_ci_rejected_student_notification(to_email: str, student_name: str, event_name: str, reason: str, request_id: str = "N/A", event_date: str = "N/A"):
+    """Notify student that Class Incharge rejected the OD request (delegates to Feature C master function)."""
+    return send_od_rejected_student_notification(
+        to_email=to_email,
+        student_name=student_name,
+        request_id=request_id if request_id != "N/A" else f"OD-{event_name[:10]}",
+        event_name=event_name,
+        event_date=event_date,
+        rejection_status="Class Incharge Rejected",
+        rejection_remarks=reason,
+        dashboard_status="Class Incharge Rejected"
+    )
 
-Your On-Duty application for '{event_name}' was declined by your Class Incharge.
 
-Reason:
-{reason}
-
-Best regards,
-REC OD Tracking System
+def send_od_hod_approved_student_notification(
+    to_email: str,
+    student_name: str,
+    event_name: str,
+    remarks: str = "",
+    request_id: str = "N/A",
+    event_date: str = "N/A",
+    deadline_str: str = "within 24 hours of event end"
+):
     """
-
-    main_html = f"""
-    <div class="card-box" style="border-left: 4px solid #ef4444; background-color: #fef2f2;">
-      <strong style="color: #b91c1c; font-size: 14px;">OD Application Declined by Class Incharge</strong>
-      <p style="margin: 4px 0 0 0; font-size: 13px; color: #991b1b;">Your OD application for <strong>{event_name}</strong> was not approved at Section Review.</p>
-      <div style="background-color: #ffffff; border: 1px solid #fecaca; border-radius: 6px; padding: 10px; margin-top: 10px; font-size: 13px; color: #7f1d1d;">
-        <strong>Reason:</strong><br>{reason}
-      </div>
-    </div>
+    Feature D — Initial HOD Approval Notification
+    Subject: OD Request Approved — Certificate Submission Required
+    Notifies student that OD request has been verified/approved and explains certificate submission requirement.
     """
-
-    html_body = _render_base_email("OD Declined by Class Incharge", "Decision Notification", student_name, main_html)
-    return send_email_async(to_email, subject, html_body, text_body)
-
-
-def send_od_hod_approved_student_notification(to_email: str, student_name: str, event_name: str, remarks: str = ""):
-    """Notify student that HOD approved OD – Reminder to upload certificate within 24h of event end."""
     base_url = getattr(Config, 'APP_BASE_URL', 'http://localhost:5173').rstrip('/')
     cert_url = f"{base_url}/student/certificates"
-    subject = f"OD Application Officially Approved by HOD! – {event_name}"
+    subject = "OD Request Approved — Certificate Submission Required"
 
     text_body = f"""Dear {student_name},
 
-Congratulations! Your On-Duty request for '{event_name}' has been officially sanctioned by the Head of Department (HOD).
+Great news! Your On-Duty (OD) request has been officially verified and approved by the Head of Department (HOD).
 
-CRITICAL REQUIREMENT:
-You must attend the event and upload your official participation certificate within 24 hours after the event ends.
-If the certificate is not uploaded within this 24-hour window, the OD sanction will automatically lapse.
+Approval Details:
+----------------------------------------
+Student Name:                   {student_name}
+OD Request ID:                  {request_id}
+Event Name:                     {event_name}
+Event Date:                     {event_date}
+HOD Verification Status:        Approved (Certificate Pending)
+Certificate Submission Deadline: {deadline_str}
+----------------------------------------
 
-Upload Certificate: {cert_url}
+MANDATORY CERTIFICATE SUBMISSION INSTRUCTIONS:
+To complete your OD process and confirm attendance credits, you must upload your official participation certificate or proof of attendance on or before the deadline.
+
+Upload Certificate Link:
+{cert_url}
+
+Instructions:
+1. Log in to your authenticated student dashboard.
+2. Navigate to the Certificates section.
+3. Upload a clear PDF or image scan of your official certificate/letter of participation.
 
 Best regards,
-REC OD Tracking System
+OD Tracking Application
     """
 
     main_html = f"""
     <div class="card-box" style="border-left: 4px solid #10b981; background-color: #f0fdf4;">
-      <strong style="color: #15803d; font-size: 15px;">Official HOD Sanction Granted</strong>
-      <p style="margin: 6px 0 0 0; font-size: 13px; color: #166534;">Your On-Duty application for <strong>{event_name}</strong> has received final approval from the Head of Department.</p>
+      <strong style="color: #15803d; font-size: 15px;">HOD Verification & Approval Granted</strong>
+      <p style="margin: 6px 0 0 0; font-size: 13px; color: #166534;">Your On-Duty application for <strong>{event_name}</strong> has received official sanction from the Head of Department.</p>
+    </div>
+
+    <div class="card-box">
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <tr><td style="padding: 4px 0; color: #64748b;">Student Name:</td><td style="font-weight: 700; color: #0f172a;">{student_name}</td></tr>
+        <tr><td style="padding: 4px 0; color: #64748b;">OD Request ID:</td><td style="font-weight: 700; color: #0f172a; font-family: monospace;">{request_id}</td></tr>
+        <tr><td style="padding: 4px 0; color: #64748b;">Event Name:</td><td style="font-weight: 700; color: #0f172a;">{event_name}</td></tr>
+        <tr><td style="padding: 4px 0; color: #64748b;">HOD Approval Status:</td><td><span style="background: #dcfce7; color: #15803d; padding: 2px 8px; border-radius: 4px; font-weight: 700;">Approved</span></td></tr>
+        <tr><td style="padding: 4px 0; color: #64748b;">Certificate Deadline:</td><td style="font-weight: 700; color: #b45309;">{deadline_str}</td></tr>
+      </table>
     </div>
 
     <div class="card-box" style="border-left: 4px solid #f59e0b; background-color: #fffbeb;">
-      <strong style="color: #b45309; font-size: 13px; display: block; margin-bottom: 4px;">Mandatory Certificate Upload Window:</strong>
-      <span style="font-size: 13px; color: #78350f;">
-        Please attend the event and upload your official certificate within <strong>24 hours</strong> of the event ending. OD attendance credits will be committed immediately upon faculty certificate verification.
+      <strong style="color: #b45309; font-size: 13px; display: block; margin-bottom: 4px;">Certificate Upload Instructions:</strong>
+      <span style="font-size: 12px; color: #78350f;">
+        Please attend the event and upload your official participation certificate before the deadline to receive attendance credits.
       </span>
     </div>
     """
 
-    html_body = _render_base_email("OD Sanctioned by HOD", "HOD Sanction Granted", student_name, main_html, cert_url, "View Certificate Portal")
-    return send_email_async(to_email, subject, html_body, text_body)
+    html_body = _render_base_email("OD Request Approved — Certificate Submission Required", "Approval Granted", student_name, main_html, cert_url, "Upload Certificate Now")
+    return send_email_async(to_email, subject, html_body, text_body, recipient_name=student_name, related_request_id=request_id if request_id != "N/A" else None, notification_type="OD_HOD_Approved")
 
 
-def send_od_hod_rejected_student_notification(to_email: str, student_name: str, event_name: str, reason: str):
-    """Notify student that HOD rejected OD request."""
-    subject = f"OD Application Decision: Declined by HOD – {event_name}"
-    
+def send_certificate_due_reminder_email(
+    to_email: str,
+    student_name: str,
+    event_name: str,
+    dates: str,
+    request_id: str,
+    deadline_str: str,
+    user_id: str | None = None
+) -> bool:
+    """
+    Feature D — Approaching Certificate Submission Deadline Reminder
+    Subject: Reminder: OD Certificate Submission Due
+    """
+    base_url = getattr(Config, 'APP_BASE_URL', 'http://localhost:5173').rstrip('/')
+    cert_url = f"{base_url}/student/certificates"
+    subject = "Reminder: OD Certificate Submission Due"
+
     text_body = f"""Dear {student_name},
 
-Your On-Duty application for '{event_name}' was not sanctioned by the Head of Department (HOD).
+This is a reminder that the certificate submission deadline for your approved On-Duty request is approaching.
 
-Executive Reason:
-{reason}
+Details:
+----------------------------------------
+Student Name:                   {student_name}
+OD Request ID:                  {request_id}
+Event Name:                     {event_name}
+Event Date:                     {dates}
+HOD Approval Status:            Approved (Certificate Pending)
+Certificate Deadline:           {deadline_str}
+----------------------------------------
+
+Instructions:
+Please log in to your authenticated student account and upload your participation certificate before the deadline:
+{cert_url}
 
 Best regards,
-REC OD Tracking System
+OD Tracking Application
+    """
+
+    main_html = f"""
+    <div class="card-box" style="border-left: 4px solid #f59e0b; background-color: #fffbeb;">
+      <strong style="color: #b45309; font-size: 15px;">Reminder: Certificate Submission Due</strong>
+      <p style="margin: 6px 0 0 0; font-size: 13px; color: #78350f;">
+        Your event <strong>{event_name}</strong> has concluded. Please upload your proof of participation before your deadline on <strong>{deadline_str}</strong>.
+      </p>
+    </div>
+
+    <div class="card-box">
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <tr><td style="padding: 4px 0; color: #64748b;">OD Request ID:</td><td style="font-weight: 700; color: #0f172a; font-family: monospace;">{request_id}</td></tr>
+        <tr><td style="padding: 4px 0; color: #64748b;">Event Name:</td><td style="font-weight: 700; color: #0f172a;">{event_name}</td></tr>
+        <tr><td style="padding: 4px 0; color: #64748b;">Deadline:</td><td style="font-weight: 700; color: #b45309;">{deadline_str}</td></tr>
+      </table>
+    </div>
+    """
+
+    html_body = _render_base_email("Reminder: OD Certificate Submission Due", "Deadline Reminder", student_name, main_html, cert_url, "Upload Certificate Now")
+    return send_email(to_email, subject, html_body, text_body, related_request_id=request_id, notification_type="cert_reminder_due", user_id=user_id)
+
+
+def send_certificate_overdue_email(
+    to_email: str,
+    student_name: str,
+    event_name: str,
+    dates: str,
+    request_id: str,
+    deadline_str: str,
+    user_id: str | None = None
+) -> bool:
+    """
+    Feature D — Overdue Certificate Submission Reminder
+    Subject: Overdue: OD Certificate Not Yet Submitted
+    """
+    base_url = getattr(Config, 'APP_BASE_URL', 'http://localhost:5173').rstrip('/')
+    cert_url = f"{base_url}/student/certificates"
+    subject = "Overdue: OD Certificate Not Yet Submitted"
+
+    text_body = f"""Dear {student_name},
+
+URGENT NOTICE: Your certificate submission for approved OD request '{event_name}' (ID: {request_id}) is OVERDUE.
+
+Details:
+----------------------------------------
+Student Name:                   {student_name}
+OD Request ID:                  {request_id}
+Event Name:                     {event_name}
+Event Date:                     {dates}
+Certificate Deadline:           {deadline_str} (EXPIRED)
+----------------------------------------
+
+Instructions:
+Your OD sanction is at risk of being automatically canceled. Please log in immediately to submit your certificate:
+{cert_url}
+
+Best regards,
+OD Tracking Application
     """
 
     main_html = f"""
     <div class="card-box" style="border-left: 4px solid #ef4444; background-color: #fef2f2;">
-      <strong style="color: #b91c1c; font-size: 14px;">OD Application Declined by HOD</strong>
-      <p style="margin: 4px 0 0 0; font-size: 13px; color: #991b1b;">Your application for <strong>{event_name}</strong> was declined at the final sanction stage.</p>
-      <div style="background-color: #ffffff; border: 1px solid #fecaca; border-radius: 6px; padding: 10px; margin-top: 10px; font-size: 13px; color: #7f1d1d;">
-        <strong>HOD Remarks:</strong><br>{reason}
-      </div>
+      <strong style="color: #b91c1c; font-size: 15px;">OVERDUE: Certificate Not Yet Submitted</strong>
+      <p style="margin: 6px 0 0 0; font-size: 13px; color: #991b1b;">
+        The deadline (<strong>{deadline_str}</strong>) for uploading your certificate for <strong>{event_name}</strong> (ID: {request_id}) has passed. Please submit your certificate immediately.
+      </p>
     </div>
     """
 
-    html_body = _render_base_email("OD Declined by HOD", "Decision Notification", student_name, main_html)
-    return send_email_async(to_email, subject, html_body, text_body)
+    html_body = _render_base_email("Overdue: OD Certificate Not Yet Submitted", "Urgent Overdue", student_name, main_html, cert_url, "Upload Certificate Immediately")
+    return send_email(to_email, subject, html_body, text_body, related_request_id=request_id, notification_type="cert_reminder_overdue", user_id=user_id)
+
+
+def send_od_hod_rejected_student_notification(to_email: str, student_name: str, event_name: str, reason: str, request_id: str = "N/A", event_date: str = "N/A"):
+    """Notify student that HOD rejected OD request (delegates to Feature C master function)."""
+    return send_od_rejected_student_notification(
+        to_email=to_email,
+        student_name=student_name,
+        request_id=request_id if request_id != "N/A" else f"OD-{event_name[:10]}",
+        event_name=event_name,
+        event_date=event_date,
+        rejection_status="HOD Rejected",
+        rejection_remarks=reason,
+        dashboard_status="HOD Rejected"
+    )
 
 
 def send_certificate_reminder_student_notification(to_email: str, student_name: str, event_name: str, deadline_str: str):
@@ -824,7 +1240,12 @@ def get_student_info(student_id_or_doc):
         student_id = student_id_or_doc
 
     try:
-        from backend.models.user import UserModel
+        try:
+            # pyrefly: ignore [missing-import]
+            from backend.models.user import UserModel  # type: ignore
+        except ImportError:
+            # pyrefly: ignore [missing-import]
+            from models.user import UserModel  # type: ignore
         u = UserModel.get_by_id(student_id) or UserModel.get_by_identifier(student_id)
         if u:
             return u.get('email'), u.get('name')
@@ -833,50 +1254,38 @@ def get_student_info(student_id_or_doc):
     return None, 'Student'
 
 
-def get_mentors_for_department(department: str = None):
+def get_mentors_for_department(department: str | None = None):
     """Find Mentor users matching department."""
     try:
-        from backend.database.mongodb import users_collection
-        col = users_collection()
-        if col is None:
-            return []
-        query = {"$or": [{"role": {"$regex": "^mentor$", "$options": "i"}}, {"sub_role": {"$regex": "^mentor$", "$options": "i"}}]}
+        from backend.models.user import UserModel
+        users = UserModel.get_all(role='Mentor')
         if department:
-            query = {"$and": [query, {"department": {"$regex": f"^{department.strip()}$", "$options": "i"}}]}
-        cursor = col.find(query)
-        return [(u.get('email'), u.get('name')) for u in cursor if u.get('email')]
+            users = [u for u in users if (u.get('department') or '').strip().lower() == department.strip().lower()]
+        return [(u.get('email'), u.get('name')) for u in users if u.get('email')]
     except Exception:
         return []
 
 
-def get_class_incharges_for_department(department: str = None, section: str = None):
+def get_class_incharges_for_department(department: str | None = None, section: str | None = None):
     """Find Class Incharge users matching department/section."""
     try:
-        from backend.database.mongodb import users_collection
-        col = users_collection()
-        if col is None:
-            return []
-        query = {"$or": [{"role": {"$regex": "^class incharge$", "$options": "i"}}, {"sub_role": {"$regex": "^class incharge$", "$options": "i"}}]}
+        from backend.models.user import UserModel
+        users = UserModel.get_all(role='Class Incharge')
         if department:
-            query = {"$and": [query, {"department": {"$regex": f"^{department.strip()}$", "$options": "i"}}]}
-        cursor = col.find(query)
-        return [(u.get('email'), u.get('name')) for u in cursor if u.get('email')]
+            users = [u for u in users if (u.get('department') or '').strip().lower() == department.strip().lower()]
+        return [(u.get('email'), u.get('name')) for u in users if u.get('email')]
     except Exception:
         return []
 
 
-def get_hods_for_department(department: str = None):
+def get_hods_for_department(department: str | None = None):
     """Find HOD users matching department."""
     try:
-        from backend.database.mongodb import users_collection
-        col = users_collection()
-        if col is None:
-            return []
-        query = {"$or": [{"role": {"$regex": "^hod$", "$options": "i"}}, {"sub_role": {"$regex": "^hod$", "$options": "i"}}]}
+        from backend.models.user import UserModel
+        users = UserModel.get_all(role='HOD')
         if department:
-            query = {"$and": [query, {"department": {"$regex": f"^{department.strip()}$", "$options": "i"}}]}
-        cursor = col.find(query)
-        return [(u.get('email'), u.get('name')) for u in cursor if u.get('email')]
+            users = [u for u in users if (u.get('department') or '').strip().lower() == department.strip().lower()]
+        return [(u.get('email'), u.get('name')) for u in users if u.get('email')]
     except Exception:
         return []
 
@@ -884,12 +1293,9 @@ def get_hods_for_department(department: str = None):
 def get_admin_users():
     """Find Admin users."""
     try:
-        from backend.database.mongodb import users_collection
-        col = users_collection()
-        if col is None:
-            return []
-        cursor = col.find({"role": {"$regex": "^admin$", "$options": "i"}})
-        return [(u.get('email'), u.get('name')) for u in cursor if u.get('email')]
+        from backend.models.user import UserModel
+        users = UserModel.get_all(role='Admin')
+        return [(u.get('email'), u.get('name')) for u in users if u.get('email')]
     except Exception:
         return []
 

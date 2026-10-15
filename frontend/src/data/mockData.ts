@@ -554,6 +554,22 @@ export const initializeDatabase = (): void => {
   if (!localStorage.getItem(KEYS.CLASS_STUDENTS)) {
     localStorage.setItem(KEYS.CLASS_STUDENTS, JSON.stringify(initialClassStudents));
   }
+  const att = localStorage.getItem(KEYS.ATTENDANCE);
+  if (!att || att === '[]') {
+    localStorage.setItem(KEYS.ATTENDANCE, JSON.stringify(initialAttendance));
+  }
+  const marks = localStorage.getItem(KEYS.MARKS);
+  if (!marks || marks === '[]') {
+    localStorage.setItem(KEYS.MARKS, JSON.stringify(initialMarks));
+  }
+  const certs = localStorage.getItem(KEYS.CERTIFICATES);
+  if (!certs || certs === '[]') {
+    localStorage.setItem(KEYS.CERTIFICATES, JSON.stringify(initialCertificates));
+  }
+  const notifs = localStorage.getItem(KEYS.NOTIFICATIONS);
+  if (!notifs || notifs === '[]') {
+    localStorage.setItem(KEYS.NOTIFICATIONS, JSON.stringify(initialNotifications));
+  }
 };
 
 // ==========================================
@@ -1544,7 +1560,17 @@ export const rejectODRequestByFaculty = (
 
 export const getAttendance = (): AttendanceSubject[] => {
   initializeDatabase();
-  return JSON.parse(localStorage.getItem(KEYS.ATTENDANCE) || '[]');
+  try {
+    const raw = localStorage.getItem(KEYS.ATTENDANCE);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      localStorage.setItem(KEYS.ATTENDANCE, JSON.stringify(initialAttendance));
+      return initialAttendance;
+    }
+    return parsed;
+  } catch {
+    return initialAttendance;
+  }
 };
 
 export const updateAttendanceForApprovedOD = (eventType: EventType): void => {
@@ -1572,7 +1598,17 @@ export const updateAttendanceForApprovedOD = (eventType: EventType): void => {
 
 export const getCATMarks = (): CATMarksEntry[] => {
   initializeDatabase();
-  return JSON.parse(localStorage.getItem(KEYS.MARKS) || '[]');
+  try {
+    const raw = localStorage.getItem(KEYS.MARKS);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      localStorage.setItem(KEYS.MARKS, JSON.stringify(initialMarks));
+      return initialMarks;
+    }
+    return parsed;
+  } catch {
+    return initialMarks;
+  }
 };
 
 // ==========================================
@@ -1581,7 +1617,17 @@ export const getCATMarks = (): CATMarksEntry[] => {
 
 export const getCertificates = (): CertificateItem[] => {
   initializeDatabase();
-  return JSON.parse(localStorage.getItem(KEYS.CERTIFICATES) || '[]');
+  try {
+    const raw = localStorage.getItem(KEYS.CERTIFICATES);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      localStorage.setItem(KEYS.CERTIFICATES, JSON.stringify(initialCertificates));
+      return initialCertificates;
+    }
+    return parsed;
+  } catch {
+    return initialCertificates;
+  }
 };
 
 export const uploadCertificate = (requestId: string, eventName: string, file: File | string): CertificateItem => {
