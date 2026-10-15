@@ -1141,7 +1141,7 @@ REC OD Tracking System
     return send_email_async(to_email, subject, html_body, text_body)
 
 
-def send_certificate_rejected_student_notification(to_email: str, student_name: str, event_name: str, remarks: str):
+def send_certificate_rejected_student_notification(to_email: str, student_name: str, event_name: str, remarks: str, request_id: str = ""):
     """Notify student that certificate was rejected."""
     subject = f"Certificate Verification Declined – {event_name}"
     

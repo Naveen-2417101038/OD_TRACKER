@@ -1141,6 +1141,9 @@ class ODRequestModel:
                 record.current_stage = 'Approved'
             else:
                 record.certificate_status = 'Rejected'
+                record.status = 'Rejected'
+                record.current_stage = 'Rejected'
+                record.rejection_reason = remarks or f"Certificate rejected during verification by {frole} ({fname})"
 
             record.remarks = remarks
             record.updated_at = now

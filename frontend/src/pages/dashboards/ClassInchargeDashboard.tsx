@@ -4,32 +4,37 @@ import {
   Eye, Check, X, Search, Filter, Calendar, 
   FileText, TrendingUp, AlertTriangle, ArrowRight,
   ShieldCheck, Award, Sparkles, BookOpen, ExternalLink,
-  Upload
+  Upload, Clock, CheckCircle, ShieldAlert, Download
 } from 'lucide-react';
 import { 
   getFacultyODRequests, approveODRequestByFaculty, 
   rejectODRequestByFaculty, getCurrentFaculty, 
-  getClassStudents, getAuthSession 
+  getClassStudents, getAuthSession, getCertificates,
+  verifyCertificateByFaculty
 } from '../../data/mockData';
 import { 
   apiGetClassInchargeODRequests, 
   apiApproveODRequestByClassIncharge, 
   apiRejectODRequestByClassIncharge,
-  apiGetAcademicStudents
+  apiGetAcademicStudents,
+  apiGetClassInchargeCertificates,
+  apiVerifyClassInchargeCertificate
 } from '../../services/api';
-import { ODRequest, Faculty, ClassStudentInfo } from '../../types/types';
+import { ODRequest, Faculty, ClassStudentInfo, CertificateItem } from '../../types/types';
 import { PortalLayout } from '../../layouts/PortalLayout';
 import { StatusBadge } from '../../components/StatusBadge';
 import { ODDetailModal } from '../../components/ODDetailModal';
 import { ApproveModal, RejectModal } from '../../components/ConfirmationModal';
 import { AcademicDataUpload } from '../../components/AcademicDataUpload';
 import { StudentManagement } from '../../components/class-incharge/StudentManagement';
+import { CertificatePreviewModal } from '../../components/CertificatePreviewModal';
 import { useToast } from '../../components/Toast';
+import { downloadODLetter, downloadCertificateFile } from '../../utils/downloadHelper';
 
 export const ClassInchargeDashboard: React.FC = () => {
   const { showToast } = useToast();
   const [faculty, setFaculty] = useState<Faculty>(getCurrentFaculty());
-  const [activeTab, setActiveTab] = useState<'pending' | 'student-management' | 'history' | 'upload'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'certificates' | 'student-management' | 'history' | 'upload'>('pending');
   const [data, setData] = useState<{
     all: ODRequest[];
     pending: ODRequest[];
@@ -40,6 +45,15 @@ export const ClassInchargeDashboard: React.FC = () => {
   const [students, setStudents] = useState<ClassStudentInfo[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<ODRequest | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+
+  // Certificates queue state
+  const [certificates, setCertificates] = useState<CertificateItem[]>([]);
+  const [certFilter, setCertFilter] = useState<'all' | 'pending' | 'verified' | 'rejected'>('all');
+  const [previewCert, setPreviewCert] = useState<CertificateItem | null>(null);
+  const [isCertModalOpen, setIsCertModalOpen] = useState(false);
+  const [rejectCertTarget, setRejectCertTarget] = useState<CertificateItem | null>(null);
+  const [rejectCertRemarks, setRejectCertRemarks] = useState('');
+  const [isRejectCertModalOpen, setIsRejectCertModalOpen] = useState(false);
 
   // Actions
   const [actionReq, setActionReq] = useState<ODRequest | null>(null);
@@ -97,8 +111,37 @@ export const ClassInchargeDashboard: React.FC = () => {
           });
         });
       }
+
+      // Sync certificates for Class Incharge verification queue
+      const certRes = await apiGetClassInchargeCertificates(session?.token);
+      if (certRes.success && Array.isArray(certRes.certificates) && certRes.certificates.length > 0) {
+        setCertificates(certRes.certificates.map(c => {
+          const cName = c.certificateName || (c.certificateUrl ? c.certificateUrl.split('/').pop() : 'certificate.pdf');
+          const fileUrl = c.fileUrl || c.certificateUrl || c.certificate_file_url || (cName ? `/api/od-requests/uploads/certificates/${cName}` : '');
+          let status: 'Verified' | 'Pending Verification' | 'Rejected' = 'Pending Verification';
+          if (c.status === 'Verified') status = 'Verified';
+          else if (c.status === 'Rejected') status = 'Rejected';
+
+          return {
+            id: c.id || `CERT_${c.requestId || c.request_id}`,
+            requestId: c.requestId || c.request_id,
+            eventName: c.eventName || c.event_name,
+            studentName: c.studentName || c.student_name,
+            studentRegNo: c.studentRegNo || c.student_reg_no || c.studentRegisterNo,
+            certificateName: cName,
+            fileUrl,
+            uploadDate: c.uploadDate || c.upload_date || c.createdAt || new Date().toISOString(),
+            status,
+            verifiedBy: c.verified_by_name || c.verifiedBy,
+            verifiedDate: c.verified_at || c.verifiedDate,
+          };
+        }));
+      } else {
+        setCertificates(getCertificates());
+      }
     } catch (err) {
       console.warn('Could not sync Class Incharge data from backend:', err);
+      setCertificates(getCertificates());
     }
   };
 
@@ -112,6 +155,33 @@ export const ClassInchargeDashboard: React.FC = () => {
       window.removeEventListener('odStateUpdated', handleUpdate);
     };
   }, []);
+
+  const handleVerifyCertificateAction = async (certId: string, status: 'Verified' | 'Rejected', remarks?: string) => {
+    const session = getAuthSession();
+    const cert = certificates.find(c => c.id === certId || c.requestId === certId);
+    const targetReqId = cert?.requestId || certId;
+
+    try {
+      const res = await apiVerifyClassInchargeCertificate(targetReqId, status, remarks, session?.token);
+      verifyCertificateByFaculty(cert?.id || certId, status, faculty, remarks);
+      
+      if (status === 'Verified') {
+        showToast(res?.message || `Certificate verified! OD request ${targetReqId} officially sanctioned.`, 'success');
+      } else {
+        showToast(res?.message || `Certificate rejected. OD request ${targetReqId} marked as rejected.`, 'error');
+      }
+    } catch (err: any) {
+      verifyCertificateByFaculty(cert?.id || certId, status, faculty, remarks);
+      showToast(`Certificate status updated to ${status}.`, status === 'Verified' ? 'success' : 'error');
+    }
+
+    setIsCertModalOpen(false);
+    setPreviewCert(null);
+    setIsRejectCertModalOpen(false);
+    setRejectCertTarget(null);
+    setRejectCertRemarks('');
+    loadData();
+  };
 
   const handleApproveConfirm = async (remarks: string) => {
     if (!actionReq) return;
@@ -160,6 +230,46 @@ export const ClassInchargeDashboard: React.FC = () => {
     }
   };
 
+  const handleDownloadODLetter = async (req: ODRequest) => {
+    const session = getAuthSession();
+    showToast(`Downloading OD letter for ${req.id}...`, 'info');
+    try {
+      await downloadODLetter(req, 'Class Incharge', session?.token);
+      showToast(`OD letter downloaded successfully`, 'success');
+    } catch {
+      showToast(`Error downloading OD letter`, 'error');
+    }
+  };
+
+  const handleDownloadCert = async (cert: CertificateItem) => {
+    const session = getAuthSession();
+    showToast(`Downloading certificate for ${cert.studentName}...`, 'info');
+    try {
+      await downloadCertificateFile(cert, session?.token);
+      showToast(`Certificate downloaded successfully`, 'success');
+    } catch {
+      showToast(`Error downloading certificate`, 'error');
+    }
+  };
+
+  const pendingCertCount = certificates.filter(c => c.status === 'Pending Verification').length;
+
+  const filteredCertificates = certificates.filter(c => {
+    const q = searchQuery.toLowerCase();
+    const matchesQuery = 
+      (c.studentName || '').toLowerCase().includes(q) ||
+      (c.studentRegNo || '').toLowerCase().includes(q) ||
+      (c.eventName || '').toLowerCase().includes(q) ||
+      (c.requestId || '').toLowerCase().includes(q) ||
+      (c.certificateName || '').toLowerCase().includes(q);
+
+    if (!matchesQuery) return false;
+    if (certFilter === 'pending') return c.status === 'Pending Verification';
+    if (certFilter === 'verified') return c.status === 'Verified';
+    if (certFilter === 'rejected') return c.status === 'Rejected';
+    return true;
+  });
+
   const filteredPending = data.pending.filter(r =>
     r.studentName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
     r.studentRegisterNo?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -205,12 +315,16 @@ export const ClassInchargeDashboard: React.FC = () => {
               <span className="text-xs text-teal-300 font-bold uppercase tracking-wider block">Forwarded ODs</span>
               <span className="text-lg font-black text-teal-200">{data.pending.length} Pending</span>
             </div>
+            <div className="bg-amber-500/20 backdrop-blur-xs px-4 py-2.5 rounded-2xl border border-amber-400/30 text-center">
+              <span className="text-xs text-amber-300 font-bold uppercase tracking-wider block">Certificates</span>
+              <span className="text-lg font-black text-amber-200">{pendingCertCount} To Verify</span>
+            </div>
           </div>
         </div>
 
         {/* Navigation Tabs & Search Controls */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-2 p-1.5 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
+          <div className="flex items-center gap-2 p-1.5 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex-wrap">
             <button
               type="button"
               onClick={() => setActiveTab('pending')}
@@ -222,6 +336,24 @@ export const ClassInchargeDashboard: React.FC = () => {
             >
               <Hourglass className="w-3.5 h-3.5" />
               <span>Pending Endorsements ({data.pending.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('certificates')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                activeTab === 'certificates'
+                  ? 'bg-teal-600 text-white shadow-md shadow-teal-200'
+                  : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
+              }`}
+            >
+              <Award className="w-3.5 h-3.5" />
+              <span>Certificate Verification</span>
+              {pendingCertCount > 0 && (
+                <span className="px-2 py-0.5 bg-amber-500 text-white text-[10px] rounded-full font-black animate-pulse">
+                  {pendingCertCount}
+                </span>
+              )}
             </button>
 
             <button
@@ -324,6 +456,16 @@ export const ClassInchargeDashboard: React.FC = () => {
 
                       <button
                         type="button"
+                        onClick={() => handleDownloadODLetter(req)}
+                        className="px-3 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-2xs"
+                        title="Download uploaded OD Request Letter"
+                      >
+                        <Download className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>Download Letter</span>
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => {
                           setSelectedRequest(req);
                           setIsDetailOpen(true);
@@ -357,6 +499,233 @@ export const ClassInchargeDashboard: React.FC = () => {
                         <Check className="w-3.5 h-3.5" />
                         <span>Endorse & Forward to HOD</span>
                       </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab: Certificate Verification */}
+        {activeTab === 'certificates' && (
+          <div className="space-y-6">
+            
+            {/* Policy & Authority Header Banner */}
+            <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-teal-950 via-slate-900 to-indigo-950 text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4 border border-teal-500/20">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 rounded-2xl bg-teal-500/20 text-teal-300 border border-teal-400/30">
+                    <Award className="w-5 h-5 sm:w-6 sm:h-6" />
+                  </div>
+                  <h3 className="text-base sm:text-lg font-black text-white">Event Certificate Verification & Final OD Sanction</h3>
+                </div>
+                <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+                  As Class Incharge, inspect genuine PDF or image participation proofs submitted by students after their event. 
+                  Verifying the certificate <strong className="text-teal-300">officially sanctions the OD request</strong> and grants compensatory attendance. 
+                  Rejecting marks the application as <strong className="text-rose-300">rejected</strong>.
+                </p>
+              </div>
+
+              {pendingCertCount > 0 ? (
+                <div className="px-4 py-3 rounded-2xl bg-amber-500/20 border border-amber-400/30 text-amber-300 flex items-center gap-2.5 self-start md:self-auto shrink-0">
+                  <Clock className="w-4 h-4 text-amber-400 animate-pulse" />
+                  <span className="text-xs font-black">{pendingCertCount} Certificate{pendingCertCount > 1 ? 's' : ''} Pending Verification</span>
+                </div>
+              ) : (
+                <div className="px-4 py-3 rounded-2xl bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 flex items-center gap-2.5 self-start md:self-auto shrink-0">
+                  <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-black">All Uploaded Certificates Verified</span>
+                </div>
+              )}
+            </div>
+
+            {/* Quick Metrics Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Certificates</span>
+                <span className="text-2xl font-black text-slate-900 mt-1 block">{certificates.length}</span>
+              </div>
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 shadow-xs">
+                <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">Pending Review</span>
+                <span className="text-2xl font-black text-amber-900 mt-1 block">{pendingCertCount}</span>
+              </div>
+              <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 shadow-xs">
+                <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">OD Sanctioned</span>
+                <span className="text-2xl font-black text-emerald-900 mt-1 block">
+                  {certificates.filter(c => c.status === 'Verified').length}
+                </span>
+              </div>
+              <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 shadow-xs">
+                <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider block">Rejected</span>
+                <span className="text-2xl font-black text-rose-900 mt-1 block">
+                  {certificates.filter(c => c.status === 'Rejected').length}
+                </span>
+              </div>
+            </div>
+
+            {/* Filter Pills */}
+            <div className="flex items-center gap-2 border-b border-slate-200/80 pb-3 overflow-x-auto">
+              <button
+                type="button"
+                onClick={() => setCertFilter('all')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  certFilter === 'all'
+                    ? 'bg-teal-600 text-white shadow-xs'
+                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                }`}
+              >
+                All Certificates ({certificates.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setCertFilter('pending')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  certFilter === 'pending'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'bg-white text-amber-800 hover:bg-amber-50 border border-amber-200'
+                }`}
+              >
+                <span>Pending Verification</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/20 font-black">
+                  {pendingCertCount}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCertFilter('verified')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  certFilter === 'verified'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'bg-white text-emerald-800 hover:bg-emerald-50 border border-emerald-200'
+                }`}
+              >
+                Verified & Sanctioned ({certificates.filter(c => c.status === 'Verified').length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setCertFilter('rejected')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  certFilter === 'rejected'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'bg-white text-rose-800 hover:bg-rose-50 border border-rose-200'
+                }`}
+              >
+                Rejected ({certificates.filter(c => c.status === 'Rejected').length})
+              </button>
+            </div>
+
+            {/* Certificate List Cards */}
+            {filteredCertificates.length === 0 ? (
+              <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center space-y-3">
+                <CheckCircle2 className="w-12 h-12 text-teal-600 mx-auto" />
+                <h3 className="text-base font-bold text-slate-800">No certificates found</h3>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                  {certFilter === 'pending'
+                    ? 'No participation certificates currently awaiting Class Incharge verification.'
+                    : 'No certificates match the selected criteria.'}
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredCertificates.map((cert) => (
+                  <div
+                    key={cert.id}
+                    className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm hover:shadow-md transition-all flex flex-col justify-between space-y-4"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-mono font-bold text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-md border border-teal-200">
+                          {cert.requestId}
+                        </span>
+                        <StatusBadge status={cert.status} size="sm" />
+                      </div>
+
+                      <div>
+                        <h4 className="font-extrabold text-sm text-slate-900 line-clamp-1">{cert.eventName}</h4>
+                        <p className="text-xs text-slate-600 mt-1">
+                          Student: <strong className="text-slate-900">{cert.studentName}</strong>
+                          {cert.studentRegNo && <span className="text-slate-400"> ({cert.studentRegNo})</span>}
+                        </p>
+                      </div>
+
+                      {/* File Box */}
+                      <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FileText className="w-4 h-4 text-teal-600 shrink-0" />
+                          <span className="text-xs font-semibold text-slate-700 truncate">{cert.certificateName}</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-medium shrink-0">
+                          {new Date(cert.uploadDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+                        </span>
+                      </div>
+
+                      {cert.status === 'Verified' && (
+                        <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-100 text-[11px] text-emerald-800 font-medium flex items-center gap-1.5">
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span>Sanctioned by {cert.verifiedBy || faculty.name}</span>
+                        </div>
+                      )}
+
+                      {cert.status === 'Rejected' && (
+                        <div className="p-2 rounded-xl bg-rose-50 border border-rose-100 text-[11px] text-rose-800 font-medium flex items-center gap-1.5">
+                          <XCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                          <span>Rejected: Participation proof declined</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Card Actions */}
+                    <div className="pt-3 border-t border-slate-100 space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPreviewCert(cert);
+                            setIsCertModalOpen(true);
+                          }}
+                          className="flex items-center justify-center gap-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl py-2 text-xs font-bold transition-all shadow-xs"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-teal-600" />
+                          <span>Inspect</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadCert(cert)}
+                          className="flex items-center justify-center gap-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-xl py-2 text-xs font-bold transition-all shadow-xs"
+                          title="Download student participation certificate"
+                        >
+                          <Download className="w-3.5 h-3.5 text-teal-600" />
+                          <span>Download</span>
+                        </button>
+                      </div>
+
+                      {cert.status === 'Pending Verification' && (
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRejectCertTarget(cert);
+                              setRejectCertRemarks('');
+                              setIsRejectCertModalOpen(true);
+                            }}
+                            className="flex items-center justify-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl py-2 text-xs font-bold transition-all"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            <span>Reject</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleVerifyCertificateAction(cert.id, 'Verified')}
+                            className="flex items-center justify-center gap-1 bg-teal-600 hover:bg-teal-700 text-white shadow-xs rounded-xl py-2 text-xs font-bold transition-all"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Verify & Sanction</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -399,16 +768,26 @@ export const ClassInchargeDashboard: React.FC = () => {
                       <td className="p-4 text-slate-600">{r.eventDate}</td>
                       <td className="p-4"><StatusBadge status={r.status} size="sm" /></td>
                       <td className="p-4 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedRequest(r);
-                            setIsDetailOpen(true);
-                          }}
-                          className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold text-xs"
-                        >
-                          View Record
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadODLetter(r)}
+                            className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-teal-700 font-bold text-xs transition-colors"
+                            title="Download OD Letter"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedRequest(r);
+                              setIsDetailOpen(true);
+                            }}
+                            className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold text-xs"
+                          >
+                            View Record
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -469,6 +848,71 @@ export const ClassInchargeDashboard: React.FC = () => {
           />
         </>
       )}
+
+      {/* Reject Certificate Reason Modal */}
+      {isRejectCertModalOpen && rejectCertTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs" onClick={() => setIsRejectCertModalOpen(false)} />
+          <div className="relative bg-white rounded-3xl shadow-2xl max-w-md w-full border border-slate-200 p-6 z-10 space-y-4 animate-scale-up">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="p-2.5 bg-rose-50 rounded-2xl border border-rose-200">
+                <ShieldAlert className="w-6 h-6 text-rose-600" />
+              </div>
+              <div>
+                <h4 className="text-base font-bold text-slate-900">Reject Certificate & OD</h4>
+                <p className="text-xs text-slate-500">{rejectCertTarget.studentName} &bull; {rejectCertTarget.requestId}</p>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider">
+                Rejection Reason *
+              </label>
+              <textarea
+                value={rejectCertRemarks}
+                onChange={(e) => setRejectCertRemarks(e.target.value)}
+                placeholder="State clearly why this certificate is rejected (e.g., student name mismatch, wrong event certificate, illegible document)..."
+                rows={3}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-semibold text-slate-800 focus:outline-none focus:border-rose-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsRejectCertModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleVerifyCertificateAction(rejectCertTarget.id, 'Rejected', rejectCertRemarks)}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md shadow-rose-200 flex items-center gap-1.5"
+              >
+                <XCircle className="w-4 h-4" />
+                <span>Confirm Rejection</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Real Document Inspection & Verification Modal */}
+      {previewCert && (
+        <CertificatePreviewModal
+          isOpen={isCertModalOpen}
+          onClose={() => {
+            setIsCertModalOpen(false);
+            setPreviewCert(null);
+          }}
+          certificate={previewCert}
+          faculty={faculty}
+          onVerify={(certId, status, remarks) => handleVerifyCertificateAction(certId, status, remarks)}
+          readOnly={false}
+        />
+      )}
+
     </PortalLayout>
   );
 };

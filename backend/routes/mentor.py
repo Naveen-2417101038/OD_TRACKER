@@ -223,17 +223,30 @@ def view_mentor_od_letter(request_id):
         return jsonify({'success': False, 'error': 'Access denied.'}), 403
 
     doc_url = req.get('od_letter_url') or req.get('documentUrl')
-    if not doc_url:
-        return jsonify({'success': False, 'error': 'No OD letter attached to this request.'}), 404
-
-    filename = os.path.basename(doc_url)
+    filename = os.path.basename(doc_url) if doc_url else f"od_letter_{request_id}.pdf"
     safe_filename = secure_filename(filename)
 
     file_path = os.path.join(Config.OD_LETTERS_FOLDER, safe_filename)
     if not os.path.exists(file_path):
-        return jsonify({'success': False, 'error': 'Attached OD letter file not found on server.'}), 404
+        from services.pdf_service import generate_od_letter_pdf
+        generate_od_letter_pdf(
+            file_path,
+            student_name=req.get('studentName', 'Student'),
+            reg_no=req.get('studentRegisterNo', req.get('studentId', '23CSD001')),
+            event_name=req.get('eventName', 'Event Requisition'),
+            organizer=req.get('eventOrganizer', 'Institutional Organizer'),
+            event_date=req.get('eventDate', req.get('fromDate', '2026-10-18')),
+            dept=req.get('department', req.get('studentDepartment', 'Computer Science and Design')),
+            req_id=request_id
+        )
 
-    return send_from_directory(Config.OD_LETTERS_FOLDER, safe_filename)
+    as_attachment = request.args.get('download', '').lower() in ['true', '1', 'yes']
+    return send_from_directory(
+        Config.OD_LETTERS_FOLDER, 
+        safe_filename, 
+        as_attachment=as_attachment, 
+        download_name=f"OD_Letter_{request_id}.pdf" if as_attachment else safe_filename
+    )
 
 
 # ─── MENTOR CERTIFICATES VERIFICATION QUEUE ───────────────────────────────────

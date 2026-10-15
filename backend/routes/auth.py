@@ -105,10 +105,17 @@ def parse_auth_token(token):
     return None, None
 
 def get_current_authenticated_user():
-    """Retrieve current user from Bearer Authorization header or session."""
+    """Retrieve current user from Bearer Authorization header, query param, or session."""
+    token = None
     auth_header = request.headers.get('Authorization', '')
     if auth_header.startswith('Bearer '):
         token = auth_header[7:].strip()
+    elif request.args.get('token'):
+        token = request.args.get('token').strip()
+    elif request.args.get('auth_token'):
+        token = request.args.get('auth_token').strip()
+
+    if token:
         token_uid, _ = parse_auth_token(token)
         if token_uid:
             user = UserModel.get_by_id(token_uid) or UserModel.get_by_identifier(token_uid)

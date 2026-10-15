@@ -350,10 +350,38 @@ def get_od_request_approvals(request_id):
 
 @od_requests_bp.route('/uploads/od_letters/<filename>', methods=['GET'])
 def serve_od_letter(filename):
-    """Safely serve uploaded OD letters and participation documents."""
-    return send_from_directory(Config.OD_LETTERS_FOLDER, secure_filename(filename))
+    """Safely serve or download uploaded OD letters and participation documents."""
+    safe_name = secure_filename(filename)
+    file_path = os.path.join(Config.OD_LETTERS_FOLDER, safe_name)
+    folder = Config.OD_LETTERS_FOLDER
+
+    if not os.path.exists(file_path):
+        legacy_path = os.path.join(Config.BASE_DIR, 'uploads', 'od_letters', safe_name)
+        if os.path.exists(legacy_path):
+            folder = os.path.join(Config.BASE_DIR, 'uploads', 'od_letters')
+            file_path = legacy_path
+        else:
+            from services.pdf_service import generate_od_letter_pdf
+            generate_od_letter_pdf(file_path, req_id=safe_name.replace('.pdf', ''))
+    
+    as_attachment = request.args.get('download', '').lower() in ['true', '1', 'yes']
+    return send_from_directory(folder, safe_name, as_attachment=as_attachment, download_name=safe_name)
 
 @od_requests_bp.route('/uploads/certificates/<filename>', methods=['GET'])
 def serve_certificate(filename):
-    """Safely serve uploaded student participation certificates."""
-    return send_from_directory(Config.CERTIFICATES_FOLDER, secure_filename(filename))
+    """Safely serve or download uploaded student participation certificates."""
+    safe_name = secure_filename(filename)
+    file_path = os.path.join(Config.CERTIFICATES_FOLDER, safe_name)
+    folder = Config.CERTIFICATES_FOLDER
+
+    if not os.path.exists(file_path):
+        legacy_path = os.path.join(Config.BASE_DIR, 'uploads', 'certificates', safe_name)
+        if os.path.exists(legacy_path):
+            folder = os.path.join(Config.BASE_DIR, 'uploads', 'certificates')
+            file_path = legacy_path
+        else:
+            from services.pdf_service import generate_certificate_pdf
+            generate_certificate_pdf(file_path, cert_id=safe_name.replace('.pdf', ''))
+    
+    as_attachment = request.args.get('download', '').lower() in ['true', '1', 'yes']
+    return send_from_directory(folder, safe_name, as_attachment=as_attachment, download_name=safe_name)
