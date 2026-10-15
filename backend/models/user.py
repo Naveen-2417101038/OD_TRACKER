@@ -43,6 +43,16 @@ def validate_college_email(email: str) -> Tuple[bool, Optional[str]]:
     return True, norm
 
 
+def normalize_username(username):
+    """
+    Consistently normalize username by trimming leading/trailing whitespace
+    and converting to lowercase for case-insensitive authentication and storage.
+    """
+    if not username:
+        return ""
+    return str(username).strip().lower()
+
+
 class OtpResult(str):
     """Enables both tuple unpacking (raw_otp, user, err) and direct string usage."""
     def __new__(cls, otp, updated_user=None, err=None):
@@ -97,7 +107,7 @@ class UserModel:
     @staticmethod
     def get_by_identifier(identifier: str, role: Optional[str] = None) -> Optional[dict]:
         """
-        Query user by identifier (Register No / Employee ID), email, or ID (case-insensitive).
+        Query user by identifier (Register No / Employee ID), username, email, or ID (case-insensitive).
         Optional role validation.
         """
         clean_id = (identifier or '').strip()

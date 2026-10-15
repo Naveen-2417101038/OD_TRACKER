@@ -117,10 +117,28 @@ export const Attendance: React.FC = () => {
             <div className="mt-4 p-3 bg-teal-50 border border-teal-200/80 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="font-bold text-teal-900">10% Academic OD Allowance:</span>
-                <span className="text-teal-700">Max allowed: <strong>{odEligibility.max_od_allowed_days} days</strong> ({odEligibility.max_od_allowed_percent}% based on attendance)</span>
+                <span className="text-teal-700">
+                  Max allowed:{' '}
+                  <strong>
+                    {odEligibility.max_od_allowed_days >= 999
+                      ? '12.0 days'
+                      : `${odEligibility.max_od_allowed_days} days`}
+                  </strong>{' '}
+                  ({odEligibility.max_od_allowed_percent}% based on attendance)
+                  {(odEligibility.has_high_cgpa || (odEligibility.cgpa && odEligibility.cgpa >= 8.5)) && (
+                    <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-200/70 text-teal-900">
+                      Exempt (CGPA ≥ 8.5)
+                    </span>
+                  )}
+                </span>
               </div>
               <div className="text-teal-800 font-semibold text-[11px]">
-                Consumed: <strong className="text-teal-950">{odEligibility.od_used_days}d</strong> • Remaining: <strong className="text-emerald-700">{odEligibility.remaining_od_days}d</strong>
+                Consumed: <strong className="text-teal-950">{odEligibility.od_used_days}d</strong> • Remaining:{' '}
+                <strong className="text-emerald-700">
+                  {odEligibility.remaining_od_days >= 999
+                    ? (odEligibility.max_od_allowed_days >= 999 ? '12.0d' : `${odEligibility.max_od_allowed_days}d`)
+                    : `${odEligibility.remaining_od_days}d`}
+                </strong>
               </div>
             </div>
           )}

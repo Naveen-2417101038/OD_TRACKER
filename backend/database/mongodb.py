@@ -258,6 +258,7 @@ def init_db():
         users.create_index([("id", ASCENDING)], unique=True)
         users.create_index([("identifier", ASCENDING)], unique=True, sparse=True)
         users.create_index([("email", ASCENDING)], unique=True, sparse=True)
+        users.create_index([("username", ASCENDING)], sparse=True)
 
         od_reqs = db['od_requests']
         od_reqs.create_index([("id", ASCENDING)], unique=True)
@@ -303,6 +304,7 @@ def init_db():
             {
                 'id': 'STUD001',
                 'identifier': '23CSD001',
+                'username': 'naveen',
                 'name': 'Naveen',
                 'email': 'naveen.23csd@rajalakshmi.edu.in',
                 'role': 'Student',
@@ -320,6 +322,7 @@ def init_db():
             {
                 'id': 'STUD002',
                 'identifier': '23CSD002',
+                'username': 'priya',
                 'name': 'Priya S',
                 'email': 'priya.23csd@rajalakshmi.edu.in',
                 'role': 'Student',
@@ -337,6 +340,7 @@ def init_db():
             {
                 'id': 'STUD003',
                 'identifier': '23CSD003',
+                'username': 'karthik',
                 'name': 'Karthik R',
                 'email': 'karthik.23csd@rajalakshmi.edu.in',
                 'role': 'Student',
@@ -354,6 +358,7 @@ def init_db():
             {
                 'id': 'FAC001',
                 'identifier': 'EMP-CSD-101',
+                'username': 'rajesh',
                 'name': 'Dr. A. Rajesh',
                 'email': 'a.rajesh@rajalakshmi.edu.in',
                 'role': 'Mentor',
@@ -371,6 +376,7 @@ def init_db():
             {
                 'id': 'FAC002',
                 'identifier': 'EMP-CSD-102',
+                'username': 'shanthi',
                 'name': 'Mrs. K. Shanthi',
                 'email': 'k.shanthi@rajalakshmi.edu.in',
                 'role': 'Class Incharge',
@@ -388,6 +394,7 @@ def init_db():
             {
                 'id': 'FAC004',
                 'identifier': 'EMP-CSD-104',
+                'username': 'karpagam',
                 'name': 'Dr. V. Karpagam',
                 'email': 'v.karpagam@rajalakshmi.edu.in',
                 'role': 'HOD',
@@ -405,6 +412,7 @@ def init_db():
             {
                 'id': 'ADM001',
                 'identifier': 'ADMIN-001',
+                'username': 'admin',
                 'name': 'System Administrator',
                 'email': 'admin@rajalakshmi.edu.in',
                 'role': 'Admin',
@@ -436,6 +444,36 @@ def init_db():
                 curr_hash = existing.get('password_hash')
                 if not curr_hash or not (curr_hash.startswith('scrypt:') or curr_hash.startswith('pbkdf2:')):
                     users.update_one({"_id": existing['_id']}, {"$set": {"password_hash": default_pwd_hash}})
+
+        # Safe migration: ensure all existing accounts have normalized lowercase username without duplicate conflicts
+        specific_unames = {
+            'STUD001': 'naveen',
+            'STUD_23CSD001': 'naveen23',
+            'STUD002': 'priya',
+            'STUD003': 'karthik',
+            'FAC001': 'rajesh',
+            'FAC002': 'shanthi',
+            'FAC004': 'karpagam',
+            'ADM001': 'admin',
+        }
+        all_existing_users = list(users.find({}))
+        existing_assigned = set()
+        for u in all_existing_users:
+            uname = u.get('username')
+            if uname:
+                existing_assigned.add(str(uname).strip().lower())
+
+        for u in all_existing_users:
+            uid = u.get('id')
+            curr_uname = u.get('username')
+            if not curr_uname:
+                candidate = specific_unames.get(uid) or (u.get('identifier') or uid).strip().lower()
+                if candidate in existing_assigned:
+                    candidate = f"{candidate}_{uid.lower()}"
+                users.update_one({"_id": u['_id']}, {"$set": {"username": candidate.lower()}})
+                existing_assigned.add(candidate.lower())
+            elif curr_uname != curr_uname.strip().lower():
+                users.update_one({"_id": u['_id']}, {"$set": {"username": curr_uname.strip().lower()}})
 
         # Seed default system settings
         settings_col = db['system_settings']

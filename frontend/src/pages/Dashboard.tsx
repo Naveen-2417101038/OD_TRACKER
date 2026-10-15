@@ -24,6 +24,9 @@ export const Dashboard: React.FC = () => {
     remainingODDays?: number;
     consumedODDays?: number;
     isEligible?: boolean;
+    hasHighCgpa?: boolean;
+    isExempt?: boolean;
+    eligibilityStatusLabel?: string;
     lastUpdated?: string;
   } | null>(null);
 
@@ -52,6 +55,9 @@ export const Dashboard: React.FC = () => {
           remainingODDays: acad.eligibility?.remaining_od_days,
           consumedODDays: acad.eligibility?.consumed_od_days,
           isEligible: acad.eligibility?.is_eligible,
+          hasHighCgpa: acad.eligibility?.has_high_cgpa || (acad.cgpa != null && acad.cgpa >= 8.5),
+          isExempt: acad.eligibility?.is_exempt,
+          eligibilityStatusLabel: acad.eligibility?.eligibility_status_label,
           lastUpdated: acad.last_updated,
         });
       }
@@ -314,14 +320,25 @@ export const Dashboard: React.FC = () => {
             </div>
 
             <div className="col-span-2 md:col-span-1 bg-purple-50/60 border border-purple-100/60 rounded-2xl p-3.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-700">10% Academic OD Cap</span>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-purple-700">10% Academic OD Cap</span>
+                {(academic.hasHighCgpa || (academic.remainingODDays !== undefined && academic.remainingODDays >= 999)) && (
+                  <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-purple-200/80 text-purple-800">
+                    Exempt (CGPA ≥ 8.5)
+                  </span>
+                )}
+              </div>
               <div className="flex items-baseline gap-1 mt-1">
                 <span className="text-2xl font-black text-purple-800">
-                  {academic.remainingODDays !== undefined ? `${academic.remainingODDays}d` : '—'}
+                  {academic.remainingODDays !== undefined
+                    ? academic.remainingODDays >= 999
+                      ? `${academic.maxODAllowedDays && academic.maxODAllowedDays < 999 ? academic.maxODAllowedDays : 12}d`
+                      : `${Math.round(academic.remainingODDays * 10) / 10}d`
+                    : '—'}
                 </span>
                 {academic.maxODAllowedDays !== undefined && (
                   <span className="text-[10px] text-purple-600 font-semibold">
-                    left of {academic.maxODAllowedDays}d
+                    left of {academic.maxODAllowedDays >= 999 ? '12' : Math.round(academic.maxODAllowedDays * 10) / 10}d
                   </span>
                 )}
               </div>

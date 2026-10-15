@@ -165,8 +165,8 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
     elif has_high_cgpa:
         eligible = True
         status_label = f"No Limit — CGPA Above {cgpa_high_threshold:.1f}"
-        max_od_allowed_days = 999.0
-        remaining_od_days = 999.0
+        # High CGPA students are exempt from the 10% limit restriction;
+        # retain the calculated 10% academic baseline rather than dummy 999.0
     else:
         projected_used = od_used_days + requested_od_days
         if requested_od_days > 0 and projected_used > max_od_allowed_days:
@@ -207,7 +207,9 @@ def calculate_od_eligibility(student_id: str, requested_od_days: float = 0.0) ->
         'eligibility_status_label': status_label,
         'status_label': status_label,
         'attendance_threshold': attendance_min_threshold,
-        'cgpa_threshold': cgpa_high_threshold
+        'cgpa_threshold': cgpa_high_threshold,
+        'has_high_cgpa': has_high_cgpa,
+        'is_exempt': has_high_cgpa
     }
 
 
