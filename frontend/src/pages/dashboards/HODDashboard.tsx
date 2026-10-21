@@ -28,6 +28,7 @@ import { StatusBadge } from '../../components/StatusBadge';
 import { ODDetailModal } from '../../components/ODDetailModal';
 import { ApproveModal, RejectModal } from '../../components/ConfirmationModal';
 import { useToast } from '../../components/Toast';
+import { downloadODLetter, downloadCertificateFile } from '../../utils/downloadHelper';
 
 export const HODDashboard: React.FC = () => {
   const { showToast } = useToast();
@@ -337,6 +338,37 @@ export const HODDashboard: React.FC = () => {
     setTimeout(() => {
       showToast(`Report downloaded: REC_CSD_OD_Report_2026.pdf`, 'success');
     }, 1200);
+  };
+
+  const handleViewODLetter = (req: ODRequest) => {
+    const letterUrl = req.documentUrl || req.odLetterUrl;
+    if (letterUrl && letterUrl.startsWith('/api/')) {
+      window.open(letterUrl, '_blank');
+    } else {
+      window.open(`/api/hod/od-requests/${req.id}/letter`, '_blank');
+    }
+  };
+
+  const handleDownloadODLetter = async (req: ODRequest) => {
+    const session = getAuthSession();
+    showToast(`Downloading OD letter for ${req.id}...`, 'info');
+    try {
+      await downloadODLetter(req, 'HOD', session?.token);
+      showToast(`OD letter downloaded successfully`, 'success');
+    } catch {
+      showToast(`Error downloading OD letter`, 'error');
+    }
+  };
+
+  const handleDownloadCert = async (req: ODRequest) => {
+    const session = getAuthSession();
+    showToast(`Downloading certificate for ${req.studentName}...`, 'info');
+    try {
+      await downloadCertificateFile(req, session?.token);
+      showToast(`Certificate downloaded successfully`, 'success');
+    } catch {
+      showToast(`Error downloading certificate`, 'error');
+    }
   };
 
   const hasActiveFilters = 
@@ -756,7 +788,27 @@ export const HODDashboard: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100">
+                    <div className="flex items-center gap-2 shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => handleViewODLetter(req)}
+                        className="px-3 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="View OD Request Letter"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-purple-600" />
+                        <span>Letter</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadODLetter(req)}
+                        className="px-3 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+                        title="Download student's OD Request Letter"
+                      >
+                        <Download className="w-3.5 h-3.5 text-purple-600" />
+                        <span>Download Letter</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => {
@@ -887,16 +939,36 @@ export const HODDashboard: React.FC = () => {
                           </span>
                         </td>
                         <td className="p-4 text-right">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedRequest(req);
-                              setIsDetailOpen(true);
-                            }}
-                            className="px-2.5 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-900 font-bold text-[11px] cursor-pointer"
-                          >
-                            Audit Record
-                          </button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadODLetter(req)}
+                              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-purple-50 hover:text-purple-900 font-bold text-xs transition-colors cursor-pointer"
+                              title="Download student's OD Letter"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+                            {(req.certificateUrl || req.certificateStatus === 'Verified') && (
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadCert(req)}
+                                className="p-1.5 rounded-lg border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 font-bold text-xs transition-colors cursor-pointer"
+                                title="Download student's Certificate"
+                              >
+                                <Award className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedRequest(req);
+                                setIsDetailOpen(true);
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-900 font-bold text-[11px] cursor-pointer"
+                            >
+                              Audit Record
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

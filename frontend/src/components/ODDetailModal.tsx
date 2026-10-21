@@ -15,6 +15,7 @@ import { StatusBadge } from './StatusBadge';
 import { ApproveModal, RejectModal } from './ConfirmationModal';
 import { CertificatePreviewModal } from './CertificatePreviewModal';
 import { useToast } from './Toast';
+import { downloadODLetter, downloadCertificateFile } from '../utils/downloadHelper';
 import { 
   User, Calendar, Clock, MapPin, Building, 
   FileText, Shield, CheckCircle2, XCircle, X, 
@@ -372,7 +373,30 @@ export const ODDetailModal: React.FC<ODDetailModalProps> = ({
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const session = getAuthSession();
+                        const isCert = Boolean(request.certificateUrl);
+                        showToast(`Downloading ${isCert ? 'certificate' : 'OD letter'}...`, 'info');
+                        try {
+                          if (isCert) {
+                            await downloadCertificateFile(request, session?.token);
+                          } else {
+                            await downloadODLetter(request, (faculty?.role || 'Mentor') as any, session?.token);
+                          }
+                          showToast(`Document downloaded successfully`, 'success');
+                        } catch {
+                          showToast(`Error downloading document`, 'error');
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-800 hover:bg-emerald-100 shadow-xs transition-all cursor-pointer"
+                      title="Download uploaded document to local computer"
+                    >
+                      <Download className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>Download</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => {

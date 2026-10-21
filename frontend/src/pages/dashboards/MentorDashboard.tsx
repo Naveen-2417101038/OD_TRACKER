@@ -27,6 +27,7 @@ import { ODDetailModal } from '../../components/ODDetailModal';
 import { ApproveModal, RejectModal } from '../../components/ConfirmationModal';
 import { CertificatePreviewModal } from '../../components/CertificatePreviewModal';
 import { useToast } from '../../components/Toast';
+import { downloadODLetter, downloadCertificateFile } from '../../utils/downloadHelper';
 
 export const MentorDashboard: React.FC = () => {
   const { showToast } = useToast();
@@ -178,6 +179,28 @@ export const MentorDashboard: React.FC = () => {
     } else {
       // Open backend letter endpoint
       window.open(`/api/mentor/od-requests/${req.id}/letter`, '_blank');
+    }
+  };
+
+  const handleDownloadODLetter = async (req: ODRequest) => {
+    const session = getAuthSession();
+    showToast(`Downloading OD letter for ${req.id}...`, 'info');
+    try {
+      await downloadODLetter(req, 'Mentor', session?.token);
+      showToast(`OD letter downloaded successfully`, 'success');
+    } catch {
+      showToast(`Error downloading OD letter`, 'error');
+    }
+  };
+
+  const handleDownloadCert = async (cert: CertificateItem) => {
+    const session = getAuthSession();
+    showToast(`Downloading certificate for ${cert.studentName}...`, 'info');
+    try {
+      await downloadCertificateFile(cert, session?.token);
+      showToast(`Certificate downloaded successfully`, 'success');
+    } catch {
+      showToast(`Error downloading certificate`, 'error');
     }
   };
 
@@ -401,17 +424,25 @@ export const MentorDashboard: React.FC = () => {
                       <span>View Details</span>
                     </button>
 
-                    {(req.documentUrl || req.odLetterUrl) && (
-                      <button
-                        type="button"
-                        onClick={() => handleViewODLetter(req)}
-                        className="px-3.5 py-2 rounded-xl border border-indigo-200 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-700 text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs"
-                        title="Inspect uploaded OD letter document"
-                      >
-                        <FileText className="w-3.5 h-3.5 text-indigo-600" />
-                        <span>View OD Letter</span>
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleViewODLetter(req)}
+                      className="px-3.5 py-2 rounded-xl border border-indigo-200 bg-indigo-50/50 hover:bg-indigo-50 text-indigo-700 text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs"
+                      title="Inspect uploaded OD letter document"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>View OD Letter</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadODLetter(req)}
+                      className="px-3.5 py-2 rounded-xl border border-indigo-300 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs"
+                      title="Download uploaded OD letter document"
+                    >
+                      <Download className="w-3.5 h-3.5 text-indigo-700" />
+                      <span>Download Letter</span>
+                    </button>
 
                     <button
                       type="button"
@@ -528,7 +559,17 @@ export const MentorDashboard: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="pt-2 flex items-center gap-2 justify-end border-t border-slate-100">
+                <div className="pt-2 flex items-center gap-2 justify-end border-t border-slate-100 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadCert(cert)}
+                    className="px-3 py-1.5 rounded-lg border border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-800 text-xs font-bold flex items-center gap-1 shadow-2xs transition-colors"
+                    title="Download student participation certificate"
+                  >
+                    <Download className="w-3.5 h-3.5 text-teal-600" />
+                    <span>Download</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => {

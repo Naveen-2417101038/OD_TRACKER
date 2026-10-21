@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { getCertificates, uploadCertificate, getODRequests, simulateVerifyCertificate, getAuthSession, syncODRequestsFromBackend } from '../data/mockData';
+import { getCertificates, uploadCertificate, getODRequests, getAuthSession, syncODRequestsFromBackend } from '../data/mockData';
 import { CertificateItem, ODRequest } from '../types/types';
 import { Card } from '../components/Card';
 import { StatusBadge } from '../components/StatusBadge';
 import { 
   Award, Upload, ShieldCheck, ShieldAlert, FileText, CheckCircle, 
-  Trash2, X, PlusCircle, ArrowUpCircle, Eye, EyeOff, AlertCircle, Clock
+  Trash2, X, PlusCircle, ArrowUpCircle, Eye, EyeOff, AlertCircle, Clock, ExternalLink
 } from 'lucide-react';
 import { useToast } from '../components/Toast';
 import { apiUploadCertificate } from '../services/api';
+import { CertificatePreviewModal } from '../components/CertificatePreviewModal';
 
 export const Certificates: React.FC = () => {
   const { showToast } = useToast();
@@ -21,6 +22,10 @@ export const Certificates: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [now, setNow] = useState<Date>(new Date());
+
+  // Real document inspection modal state
+  const [previewCert, setPreviewCert] = useState<CertificateItem | null>(null);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   const loadData = async () => {
     // Initial local cache
@@ -46,20 +51,31 @@ export const Certificates: React.FC = () => {
         ));
 
         const liveCerts: CertificateItem[] = backendReqs
-          .filter(r => r.certificateUrl || r.certificateStatus === 'Verified' || r.certificateStatus === 'Pending Verification')
-          .map(r => ({
-            id: `CERT_${r.id}`,
-            requestId: r.id,
-            eventName: r.eventName,
-            studentName: r.studentName,
-            studentRegNo: r.studentRegisterNo || r.studentId,
-            certificateName: r.certificateUrl ? r.certificateUrl.split('/').pop() || 'certificate.pdf' : 'certificate.pdf',
-            fileUrl: r.certificateUrl || '',
-            uploadDate: r.certificateSubmittedAt || (r as any).updatedAt || r.createdAt || new Date().toISOString(),
-            status: r.certificateStatus === 'Verified' ? 'Verified' : 'Pending Verification',
-            verifiedByFacultyName: r.stages?.mentor?.faculty_name || 'Dr. A. Rajesh',
-            verifiedAt: r.stages?.mentor?.date || ''
-          }));
+          .filter(r => r.certificateUrl || r.certificateStatus === 'Verified' || r.certificateStatus === 'Pending Verification' || r.certificateStatus === 'Rejected')
+          .map(r => {
+            const certFileName = r.certificateUrl ? r.certificateUrl.split('/').pop() || 'certificate.pdf' : 'certificate.pdf';
+            const resolvedUrl = r.certificateUrl && (r.certificateUrl.startsWith('http') || r.certificateUrl.startsWith('/api/') || r.certificateUrl.startsWith('blob:'))
+              ? r.certificateUrl
+              : `/api/od-requests/uploads/certificates/${certFileName}`;
+
+            let normalizedStatus: 'Verified' | 'Pending Verification' | 'Rejected' = 'Pending Verification';
+            if (r.certificateStatus === 'Verified') normalizedStatus = 'Verified';
+            else if (r.certificateStatus === 'Rejected') normalizedStatus = 'Rejected';
+
+            return {
+              id: `CERT_${r.id}`,
+              requestId: r.id,
+              eventName: r.eventName,
+              studentName: r.studentName,
+              studentRegNo: r.studentRegisterNo || r.studentId,
+              certificateName: certFileName,
+              fileUrl: resolvedUrl,
+              uploadDate: r.certificateSubmittedAt || (r as any).updatedAt || r.createdAt || new Date().toISOString(),
+              status: normalizedStatus,
+              verifiedByFacultyName: r.stages?.mentor?.faculty_name || 'Class Incharge',
+              verifiedAt: r.stages?.mentor?.date || ''
+            };
+          });
 
         if (liveCerts.length > 0) {
           setCertificates(liveCerts);
@@ -165,14 +181,9 @@ export const Certificates: React.FC = () => {
     setIsUploading(false);
   };
 
-  const handleSimulateVerify = (id: string, status: 'Verified' | 'Rejected') => {
-    simulateVerifyCertificate(id, status);
-    loadData();
-    showToast(`Simulated certificate status change to ${status}.`, 'info');
-  };
-
   const handleReplaceFile = (cert: CertificateItem) => {
-    showToast(`Replacing certificate file "${cert.certificateName}" initialized.`, 'info');
+    setSelectedReqId(cert.requestId);
+    setShowUploadModal(true);
   };
 
   return (
@@ -248,41 +259,48 @@ export const Certificates: React.FC = () => {
                 </div>
 
                 {/* Card Actions */}
-                <div className="mt-5 border-t border-slate-100 pt-3 space-y-3">
+                <div className="mt-5 border-t border-slate-100 pt-3 space-y-2.5">
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => showToast('Opening certificate PDF reader simulator.', 'info')}
-                      className="flex-1 flex items-center justify-center gap-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-lg py-1.5 text-xs font-bold transition-all shadow-sm"
+                      type="button"
+                      onClick={() => {
+                        setPreviewCert(cert);
+                        setIsPreviewOpen(true);
+                      }}
+                      className="flex-1 flex items-center justify-center gap-1.5 bg-primary-50 hover:bg-primary-100 text-primary-700 border border-primary-200/80 rounded-xl py-2 text-xs font-bold transition-all shadow-xs"
                     >
                       <Eye className="w-3.5 h-3.5" />
-                      <span>View</span>
+                      <span>Inspect File</span>
                     </button>
                     <button
+                      type="button"
                       onClick={() => handleReplaceFile(cert)}
-                      className="flex-1 flex items-center justify-center gap-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-lg py-1.5 text-xs font-bold transition-all shadow-sm"
+                      className="flex-1 flex items-center justify-center gap-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl py-2 text-xs font-bold transition-all shadow-xs"
                     >
+                      <Upload className="w-3.5 h-3.5" />
                       <span>Replace</span>
                     </button>
                   </div>
 
-                  {/* Simulator action links inside card for easy demo */}
+                  {/* Verification Status Banner - Informs student that Class Incharge verifies */}
                   {cert.status === 'Pending Verification' && (
-                    <div className="flex items-center justify-between border-t border-dashed border-slate-200 pt-2 text-[10px] text-slate-400 font-semibold bg-amber-50/50 p-2 rounded border border-amber-100">
-                      <span>Simulate Approval:</span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleSimulateVerify(cert.id, 'Verified')}
-                          className="text-emerald-600 hover:text-emerald-800 hover:underline font-bold"
-                        >
-                          Verify ✓
-                        </button>
-                        <button
-                          onClick={() => handleSimulateVerify(cert.id, 'Rejected')}
-                          className="text-rose-600 hover:text-rose-800 hover:underline font-bold"
-                        >
-                          Reject ✕
-                        </button>
-                      </div>
+                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 font-semibold">
+                      <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0 animate-pulse" />
+                      <span>Awaiting Class Incharge verification</span>
+                    </div>
+                  )}
+
+                  {cert.status === 'Verified' && (
+                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800 font-semibold">
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>Verified &bull; OD Sanctioned</span>
+                    </div>
+                  )}
+
+                  {cert.status === 'Rejected' && (
+                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-[11px] text-rose-800 font-semibold">
+                      <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                      <span>Rejected by Class Incharge</span>
                     </div>
                   )}
                 </div>
@@ -430,6 +448,19 @@ export const Certificates: React.FC = () => {
             </form>
           </Card>
         </div>
+      )}
+
+      {/* Real Document Inspection Modal */}
+      {previewCert && (
+        <CertificatePreviewModal
+          isOpen={isPreviewOpen}
+          onClose={() => {
+            setIsPreviewOpen(false);
+            setPreviewCert(null);
+          }}
+          certificate={previewCert}
+          readOnly={true}
+        />
       )}
 
     </div>

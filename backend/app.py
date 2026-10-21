@@ -66,6 +66,17 @@ def create_app(config_class=Config):
             except Exception as sync_err:
                 print(f"[!] Registry sync notice: {sync_err}")
 
+        # Sync existing uploads to Azure Blob Storage if configured
+        try:
+            from backend.scripts.sync_to_azure_blob import sync_uploads_to_blob
+            sync_uploads_to_blob()
+        except Exception:
+            try:
+                from scripts.sync_to_azure_blob import sync_uploads_to_blob
+                sync_uploads_to_blob()
+            except Exception as blob_sync_err:
+                pass
+
     # Teardown scoped SQLAlchemy session after each request
     @app.teardown_appcontext
     def shutdown_session(exception=None):

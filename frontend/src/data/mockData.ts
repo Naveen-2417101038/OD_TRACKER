@@ -1242,6 +1242,10 @@ export const saveODRequest = (
   newRequestData: Omit<ODRequest, 'id' | 'status' | 'approvalStage' | 'stages' | 'createdAt'>, 
   fileObj?: File | null
 ): ODRequest => {
+  if (!fileObj && !newRequestData.documentUrl) {
+    throw new Error('OD Letter or Supporting Document is mandatory. You cannot submit an OD request without uploading an event brochure, invitation letter, or registration proof.');
+  }
+
   const reqs = getODRequests();
   const student = getStudentProfile();
   const idNum = reqs.length + 20;
@@ -1313,6 +1317,13 @@ export const saveODRequestAsync = async (
   newRequestData: Omit<ODRequest, 'id' | 'status' | 'approvalStage' | 'stages' | 'createdAt'>,
   fileObj?: File | null
 ): Promise<{ success: boolean; request?: ODRequest; error?: string }> => {
+  if (!fileObj && !newRequestData.documentUrl) {
+    return {
+      success: false,
+      error: 'OD Letter or Supporting Document is mandatory. You cannot submit an OD request without uploading an event brochure, invitation letter, or registration proof.'
+    };
+  }
+
   const session = getAuthSession();
   
   // 1. Submit to Flask Backend API

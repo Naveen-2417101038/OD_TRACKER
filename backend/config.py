@@ -58,9 +58,24 @@ class Config:
     MONGO_DB_NAME = os.environ.get('MONGO_DB_NAME', 'od_tracking')
 
     # ── Upload Directories ────────────────────────────────────────────────────
-    UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', os.path.join(BASE_DIR, 'uploads'))
+    # In Azure App Service, store under /home/uploads so files are visible in Kudu file manager and persisted
+    if os.environ.get('UPLOAD_FOLDER'):
+        UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER')
+    elif IS_AZURE and os.path.exists('/home'):
+        UPLOAD_FOLDER = '/home/uploads'
+    else:
+        UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', os.path.join(BASE_DIR, 'uploads'))
+
     OD_LETTERS_FOLDER = os.path.join(UPLOAD_FOLDER, 'od_letters')
     CERTIFICATES_FOLDER = os.path.join(UPLOAD_FOLDER, 'certificates')
+
+    # ── Azure Blob Storage Configuration ──────────────────────────────────────
+    AZURE_STORAGE_ACCOUNT_NAME = os.environ.get('AZURE_STORAGE_ACCOUNT_NAME', 'odtrackerstorage')
+    AZURE_STORAGE_CONNECTION_STRING = os.environ.get('AZURE_STORAGE_CONNECTION_STRING', '')
+    AZURE_STORAGE_KEY = os.environ.get('AZURE_STORAGE_KEY', '')
+    AZURE_BLOB_CONTAINER_OD_LETTERS = os.environ.get('AZURE_BLOB_CONTAINER_OD_LETTERS', 'odletters')
+    AZURE_BLOB_CONTAINER_CERTIFICATES = os.environ.get('AZURE_BLOB_CONTAINER_CERTIFICATES', 'certificates')
+    AZURE_BLOB_ENABLED = bool(os.environ.get('AZURE_STORAGE_CONNECTION_STRING') or os.environ.get('AZURE_STORAGE_ACCOUNT_NAME') or IS_AZURE)
 
     # ── Allowed File Extensions ───────────────────────────────────────────────
     ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'webp'}

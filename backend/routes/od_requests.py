@@ -8,8 +8,9 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
+import io
 from werkzeug.utils import secure_filename
-from flask import Blueprint, request, jsonify, send_from_directory
+from flask import Blueprint, request, jsonify, send_from_directory, send_file
 try:
     from backend.models.od_request import ODRequestModel
     from backend.models.od_history import ODHistoryModel
@@ -149,23 +150,45 @@ def create_od_request():
             'error': "OD request duration cannot exceed 30 consecutive days."
         }), 400
 
-    # 4. Handle File Upload
+    # 4. Mandatory OD Letter / Supporting Document Validation & Handling
+    has_uploaded_file = bool(uploaded_file and getattr(uploaded_file, 'filename', None) and uploaded_file.filename.strip())
+    doc_url = (data.get('od_letter_url') or data.get('documentUrl') or data.get('odLetterUrl') or '').strip()
+
+    if not has_uploaded_file and not doc_url:
+        return jsonify({
+            'success': False,
+            'error': "OD Letter or Supporting Document is mandatory. You cannot submit an OD request without uploading an event brochure, invitation letter, or registration proof."
+        }), 400
+
     document_url = None
-    if uploaded_file and uploaded_file.filename:
+    if has_uploaded_file:
         if not is_allowed_file(uploaded_file.filename):
             return jsonify({
                 'success': False,
-                'error': f"Invalid file type. Allowed formats are: {', '.join(Config.ALLOWED_EXTENSIONS)}."
+                'error': f"Invalid file type for OD letter. Allowed formats are: {', '.join(Config.ALLOWED_EXTENSIONS)}."
             }), 400
 
         orig_name = secure_filename(uploaded_file.filename) or 'document.pdf'
-        ext = orig_name.rsplit('.', 1)[1] if '.' in orig_name else 'pdf'
+        ext = orig_name.rsplit('.', 1)[1].lower() if '.' in orig_name else 'pdf'
         safe_filename = f"od_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}.{ext}"
         save_path = os.path.join(Config.OD_LETTERS_FOLDER, safe_filename)
         
         os.makedirs(Config.OD_LETTERS_FOLDER, exist_ok=True)
         uploaded_file.save(save_path)
+
+        # Upload to Azure Blob Storage container 'odletters'
+        try:
+            try:
+                from backend.services.blob_storage_service import blob_storage
+            except ImportError:
+                from services.blob_storage_service import blob_storage
+            blob_storage.upload_file('odletters', safe_filename, save_path)
+        except Exception as blob_err:
+            print(f"[!] Azure blob upload notice for OD letter {safe_filename}: {blob_err}")
+
         document_url = f"/api/od-requests/uploads/od_letters/{safe_filename}"
+    elif doc_url:
+        document_url = doc_url
 
     # 5. Insert into MongoDB using Authenticated Student Profile
     req_payload = {
@@ -302,6 +325,17 @@ def upload_request_certificate(request_id):
 
     os.makedirs(Config.CERTIFICATES_FOLDER, exist_ok=True)
     uploaded_file.save(save_path)
+
+    # Upload to Azure Blob Storage container 'certificates'
+    try:
+        try:
+            from backend.services.blob_storage_service import blob_storage
+        except ImportError:
+            from services.blob_storage_service import blob_storage
+        blob_storage.upload_file('certificates', safe_filename, save_path)
+    except Exception as blob_err:
+        print(f"[!] Azure blob upload notice for certificate {safe_filename}: {blob_err}")
+
     cert_url = f"/api/od-requests/uploads/certificates/{safe_filename}"
 
     updated_req, err = ODRequestModel.upload_certificate(request_id, active_user, cert_url)
@@ -339,10 +373,94 @@ def get_od_request_approvals(request_id):
 
 @od_requests_bp.route('/uploads/od_letters/<filename>', methods=['GET'])
 def serve_od_letter(filename):
-    """Safely serve uploaded OD letters and participation documents."""
-    return send_from_directory(Config.OD_LETTERS_FOLDER, secure_filename(filename))
+    """Safely serve or download uploaded OD letters and participation documents."""
+    safe_name = secure_filename(filename)
+    as_attachment = request.args.get('download', '').lower() in ['true', '1', 'yes']
+
+    # 1. Try Azure Blob Storage container 'odletters' first
+    try:
+        try:
+            from backend.services.blob_storage_service import blob_storage
+        except ImportError:
+            from services.blob_storage_service import blob_storage
+
+        blob_data, content_type = blob_storage.download_file('odletters', safe_name)
+        if blob_data:
+            return send_file(
+                io.BytesIO(blob_data),
+                mimetype=content_type or 'application/octet-stream',
+                as_attachment=as_attachment,
+                download_name=safe_name
+            )
+    except Exception as e:
+        print(f"[Azure Blob] Serve OD letter error for {safe_name}: {e}")
+
+    # 2. Local disk fallback
+    file_path = os.path.join(Config.OD_LETTERS_FOLDER, safe_name)
+    folder = Config.OD_LETTERS_FOLDER
+
+    if not os.path.exists(file_path):
+        legacy_path = os.path.join(Config.BASE_DIR, 'uploads', 'od_letters', safe_name)
+        if os.path.exists(legacy_path):
+            folder = os.path.join(Config.BASE_DIR, 'uploads', 'od_letters')
+            file_path = legacy_path
+        else:
+            try:
+                from backend.services.pdf_service import generate_od_letter_pdf
+            except ImportError:
+                from services.pdf_service import generate_od_letter_pdf
+            generate_od_letter_pdf(file_path, req_id=safe_name.replace('.pdf', ''))
+            # Auto-sync generated PDF back to Azure Blob container
+            try:
+                blob_storage.upload_file('odletters', safe_name, file_path)
+            except Exception:
+                pass
+    
+    return send_from_directory(folder, safe_name, as_attachment=as_attachment, download_name=safe_name)
 
 @od_requests_bp.route('/uploads/certificates/<filename>', methods=['GET'])
 def serve_certificate(filename):
-    """Safely serve uploaded student participation certificates."""
-    return send_from_directory(Config.CERTIFICATES_FOLDER, secure_filename(filename))
+    """Safely serve or download uploaded student participation certificates."""
+    safe_name = secure_filename(filename)
+    as_attachment = request.args.get('download', '').lower() in ['true', '1', 'yes']
+
+    # 1. Try Azure Blob Storage container 'certificates' first
+    try:
+        try:
+            from backend.services.blob_storage_service import blob_storage
+        except ImportError:
+            from services.blob_storage_service import blob_storage
+
+        blob_data, content_type = blob_storage.download_file('certificates', safe_name)
+        if blob_data:
+            return send_file(
+                io.BytesIO(blob_data),
+                mimetype=content_type or 'application/octet-stream',
+                as_attachment=as_attachment,
+                download_name=safe_name
+            )
+    except Exception as e:
+        print(f"[Azure Blob] Serve certificate error for {safe_name}: {e}")
+
+    # 2. Local disk fallback
+    file_path = os.path.join(Config.CERTIFICATES_FOLDER, safe_name)
+    folder = Config.CERTIFICATES_FOLDER
+
+    if not os.path.exists(file_path):
+        legacy_path = os.path.join(Config.BASE_DIR, 'uploads', 'certificates', safe_name)
+        if os.path.exists(legacy_path):
+            folder = os.path.join(Config.BASE_DIR, 'uploads', 'certificates')
+            file_path = legacy_path
+        else:
+            try:
+                from backend.services.pdf_service import generate_certificate_pdf
+            except ImportError:
+                from services.pdf_service import generate_certificate_pdf
+            generate_certificate_pdf(file_path, cert_id=safe_name.replace('.pdf', ''))
+            # Auto-sync generated PDF back to Azure Blob container
+            try:
+                blob_storage.upload_file('certificates', safe_name, file_path)
+            except Exception:
+                pass
+    
+    return send_from_directory(folder, safe_name, as_attachment=as_attachment, download_name=safe_name)
